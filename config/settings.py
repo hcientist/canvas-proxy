@@ -39,6 +39,15 @@ SECRET_KEY = env("DJANGO_SECRET_KEY", "insecure-dev-key-do-not-use-in-production
 DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", ["localhost", "127.0.0.1"])
 
+# The container healthcheck dials the app on loopback, so loopback always has to
+# be accepted or the container can never report healthy. This costs nothing
+# here: every absolute URL the app emits is built from PROXY_BASE_URL, never
+# from the request's Host header, so ALLOWED_HOSTS is defence in depth rather
+# than the thing keeping redirect targets honest.
+for _loopback in ("127.0.0.1", "localhost"):
+    if _loopback not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_loopback)
+
 # Public origin of this proxy. Every Canvas developer key must list
 # {PROXY_BASE_URL}/oauth2/canvas/callback as a redirect URI.
 PROXY_BASE_URL = env("PROXY_BASE_URL", "http://localhost:8000").rstrip("/")
@@ -60,6 +69,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Serves /static/ from the container, since the reverse proxy in front of
+    # this app only forwards -- it has no access to the collected files.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -135,6 +147,16 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        # Hashed filenames, so the admin's CSS can be cached indefinitely.
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        if not (DEBUG or TESTING)
+        else "django.contrib.staticfiles.storage.StaticFilesStorage"
+    },
+}
+
 CACHES = {
     "default": {
         "BACKEND": env(
@@ -154,9 +176,18 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 
 if not DEBUG and not TESTING:
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    # SECURE_COOKIES and SECURE_SSL_REDIRECT both answer "is there TLS in front
+    # of this app?", so set them together. Leaving cookies marked Secure while
+    # actually serving plain http means the browser never sends the CSRF cookie
+    # back, and every form POST -- sign-in, the consent screen, the whole
+    # dashboard -- fails with an opaque 403.
+    secure_cookies = env_bool("SECURE_COOKIES", True)
+    SESSION_COOKIE_SECURE = secure_cookies
+    CSRF_COOKIE_SECURE = secure_cookies
     SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", True)
+    # The healthcheck probes over plain http on loopback; bouncing it to https
+    # would make the container's health depend on TLS it never speaks.
+    SECURE_REDIRECT_EXEMPT = [r"^healthz$"]
     SECURE_HSTS_SECONDS = int(env("SECURE_HSTS_SECONDS", "31536000"))
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", True)

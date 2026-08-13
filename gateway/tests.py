@@ -267,6 +267,14 @@ class RateLimitTests(GatewayTestCase):
         self.assertEqual(response.status_code, 429)
         self.assertIn("Retry-After", response)
 
+    def test_an_unreachable_cache_does_not_break_the_proxy(self):
+        # A Redis outage must not take every API call down with it.
+        with mock.patch(
+            "gateway.ratelimit.cache.add", side_effect=ConnectionError("redis is down")
+        ):
+            response = self.call()
+        self.assertEqual(response.status_code, 200)
+
     def test_the_limit_is_per_app(self):
         other_app = make_app(make_user("other"), self.tier, name="Other")
         other_grant = CanvasGrant.objects.create(

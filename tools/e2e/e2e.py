@@ -1,13 +1,25 @@
-"""Drive the proxy end to end over real HTTP against the fake Canvas."""
+"""Drive the proxy end to end over real HTTP against the fake Canvas.
 
+    python tools/e2e/e2e.py <client_id> <client_secret>
+
+Environment:
+  PROXY_URL        where to reach the proxy      (default http://127.0.0.1:8099)
+  CANVAS_URL       the Canvas origin the proxy is configured with
+  CANVAS_FROM_HOST where *this script* should dial that origin instead. Needed
+                   when the proxy runs in a container and knows Canvas by a
+                   name only resolvable inside Docker.
+"""
+
+import os
 import re
 import sys
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import requests
 
-PROXY = "http://127.0.0.1:8099"
-CANVAS = "http://127.0.0.1:9911"
+PROXY = os.environ.get("PROXY_URL", "http://127.0.0.1:8099")
+CANVAS = os.environ.get("CANVAS_URL", "http://127.0.0.1:9911")
+CANVAS_FROM_HOST = os.environ.get("CANVAS_FROM_HOST", CANVAS)
 REDIRECT = "http://localhost:3000/callback"
 
 CLIENT_ID = sys.argv[1]
@@ -20,6 +32,13 @@ def check(label, condition, detail=""):
     (passed if condition else failed).append(label)
     mark = "ok  " if condition else "FAIL"
     print(f"  [{mark}] {label}{'  -> ' + str(detail) if detail and not condition else ''}")
+
+
+def dialable(url):
+    """Rewrite a Canvas URL to an address reachable from this machine."""
+    if CANVAS_FROM_HOST != CANVAS and url.startswith(CANVAS):
+        return CANVAS_FROM_HOST + url[len(CANVAS) :]
+    return url
 
 
 session = requests.Session()
@@ -49,7 +68,7 @@ r = session.post(
 check("redirects to Canvas", r.headers.get("Location", "").startswith(CANVAS), r.headers.get("Location"))
 check("app state not leaked to Canvas", "app-state-xyz" not in r.headers.get("Location", ""))
 
-r = session.get(r.headers["Location"], allow_redirects=False)          # fake Canvas
+r = session.get(dialable(r.headers["Location"]), allow_redirects=False)   # fake Canvas
 r = session.get(r.headers["Location"], allow_redirects=False)          # proxy callback
 location = r.headers.get("Location", "")
 check("returns to the app's redirect_uri", location.startswith(REDIRECT), location)
@@ -88,7 +107,7 @@ csrf = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', r.text).group(1)
 action = re.search(r'action="(/oauth2/auth/[^"]+/confirm)"', r.text).group(1)
 r = session2.post(PROXY + action, data={"csrfmiddlewaretoken": csrf, "decision": "allow"},
                   headers={"Referer": auth_url}, allow_redirects=False)
-r = session2.get(r.headers["Location"], allow_redirects=False)
+r = session2.get(dialable(r.headers["Location"]), allow_redirects=False)
 r = session2.get(r.headers["Location"], allow_redirects=False)
 code = parse_qs(urlsplit(r.headers["Location"]).query)["code"][0]
 body = requests.post(f"{PROXY}/oauth2/token", data={

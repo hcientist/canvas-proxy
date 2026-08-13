@@ -1,10 +1,16 @@
 """A stand-in Canvas instance, just enough to drive the proxy end to end."""
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-PORT = 9911
+PORT = int(os.environ.get("FAKE_CANVAS_PORT", "9911"))
+
+# The origin the proxy knows this server by. Pagination Link headers are built
+# from it, so the proxy's rewriting can be checked against a realistic value.
+PUBLIC_URL = os.environ.get("FAKE_CANVAS_PUBLIC_URL", f"http://127.0.0.1:{PORT}")
+
 ISSUED = {"access": "CANVAS-ACCESS-TOKEN-SECRET", "refresh": "CANVAS-REFRESH-TOKEN-SECRET"}
 
 
@@ -42,8 +48,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if parts.path == "/api/v1/courses":
             link = (
-                f'<http://127.0.0.1:{PORT}/api/v1/courses?page=2>; rel="next", '
-                f'<http://127.0.0.1:{PORT}/api/v1/courses?page=4>; rel="last"'
+                f'<{PUBLIC_URL}/api/v1/courses?page=2>; rel="next", '
+                f'<{PUBLIC_URL}/api/v1/courses?page=4>; rel="last"'
             )
             self._json(
                 200,
@@ -96,4 +102,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    # Defaults to loopback; the containerised run binds all interfaces so the
+    # published port and the app container can both reach it.
+    HTTPServer((os.environ.get("FAKE_CANVAS_BIND", "127.0.0.1"), PORT), Handler).serve_forever()

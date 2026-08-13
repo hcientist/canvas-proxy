@@ -1,0 +1,47 @@
+# Verification overlay: runs the real image against a stand-in Canvas, with no
+# real developer keys and nothing published to the outside world.
+#
+#   ./tools/e2e/run-docker.sh
+#
+# It publishes the app on 127.0.0.1:8099 (loopback only) so the harness can
+# drive it, and adds a fake Canvas the app container can resolve by name.
+#
+# Every container is renamed, so this can run alongside a live deployment
+# without colliding with it. Service names are untouched, so DNS between the
+# containers -- including CANVAS_BASE_URL=http://fake-canvas:9911 -- still works.
+
+services:
+  canvas-proxy:
+    container_name: canvas-proxy-smoke
+    ports:
+      - "127.0.0.1:8099:8000"
+    depends_on:
+      fake-canvas:
+        condition: service_started
+    networks:
+      - web
+      - internal
+
+  postgres:
+    container_name: canvas-proxy-smoke-postgres
+
+  redis:
+    container_name: canvas-proxy-smoke-redis
+
+  fake-canvas:
+    image: python:3.12-slim
+    container_name: canvas-proxy-smoke-fake-canvas
+    restart: "no"
+    environment:
+      FAKE_CANVAS_PORT: "9911"
+      FAKE_CANVAS_BIND: "0.0.0.0"
+      # The origin the app container knows this service by, so the pagination
+      # Link headers it emits are the ones the proxy has to rewrite.
+      FAKE_CANVAS_PUBLIC_URL: http://fake-canvas:9911
+    volumes:
+      - ./tools/e2e/fake_canvas.py:/fake_canvas.py:ro
+    command: ["python", "/fake_canvas.py"]
+    ports:
+      - "127.0.0.1:9911:9911"
+    networks:
+      - internal

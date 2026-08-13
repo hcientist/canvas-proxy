@@ -1,0 +1,71 @@
+# Nginx Proxy Manager routes to this stack over the shared `web` network.
+# Create it once if it doesn't exist:  docker network create web
+#
+# Then in the NPM UI add a Proxy Host:
+#   Domain:          canvas-proxy.example.edu
+#   Forward Hostname: canvas-proxy
+#   Forward Port:     8000
+#   Websockets: off   Block common exploits: on   SSL: request a certificate
+#
+# Postgres and Redis stay on a private network with no route in from `web`.
+
+networks:
+  web:
+    external: true
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+
+services:
+  canvas-proxy:
+    build: .
+    image: canvas-proxy:latest
+    container_name: canvas-proxy
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file:
+      # Overridable so the verification overlay can point at a throwaway file
+      # instead of your real .env.
+      - ${ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgres://canvasproxy:${POSTGRES_PASSWORD}@postgres:5432/canvasproxy
+      CACHE_BACKEND: django.core.cache.backends.redis.RedisCache
+      CACHE_LOCATION: redis://redis:6379/1
+      # Only the proxy can reach this container, so its forwarding headers
+      # are the ones we trust for client IPs and the https scheme.
+      FORWARDED_ALLOW_IPS: "*"
+    networks:
+      - web
+      - internal
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: canvas-proxy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: canvasproxy
+      POSTGRES_USER: canvasproxy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canvasproxy -d canvasproxy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: canvas-proxy-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - internal

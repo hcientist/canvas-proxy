@@ -3,7 +3,9 @@
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db import connection
 from django.db.models import Count, Q
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 
@@ -29,6 +31,23 @@ def home(request):
             "proxy_base_url": settings.PROXY_BASE_URL,
         },
     )
+
+
+def healthz(request):
+    """Liveness probe for the container orchestrator. Never cached."""
+    try:
+        connection.ensure_connection()
+    except Exception as exc:  # noqa: BLE001 - report, don't raise, to the probe
+        return JsonResponse({"status": "error", "database": str(exc)}, status=503)
+
+    configured = AccessTier.objects.filter(is_active=True).exclude(
+        canvas_client_id=""
+    ).count()
+    response = JsonResponse(
+        {"status": "ok", "database": "ok", "configured_tiers": configured}
+    )
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @login_required

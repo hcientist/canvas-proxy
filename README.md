@@ -101,8 +101,83 @@ descriptions but leaves your rule edits alone; pass `--reset-rules` to overwrite
 .venv/bin/python manage.py runserver
 ```
 
-Behind a TLS terminator in production (`gunicorn config.wsgi` + nginx), with
-`BEHIND_TLS_PROXY=1`.
+For production, see Docker below.
+
+---
+
+## Docker
+
+```bash
+cp .env.example .env      # fill in the domain, keys and passwords
+docker compose up -d
+```
+
+Three containers: the app under gunicorn, Postgres, and Redis. The app joins the
+external `web` network so a reverse proxy can reach it; Postgres and Redis stay
+on a private network with no route in. Nothing is published to the host — the
+only way in is through your proxy.
+
+The entrypoint waits for Postgres, applies migrations, and runs `seed_tiers`, so
+a fresh volume comes up ready. Static files are baked into the image at build
+time and served by whitenoise, since the reverse proxy has no access to them.
+`/healthz` backs the container healthcheck.
+
+Create the shared network once if you don't already have it:
+
+```bash
+docker network create web
+```
+
+### Nginx Proxy Manager
+
+Add a Proxy Host:
+
+| Field | Value |
+|---|---|
+| Domain Names | `canvas-proxy.example.edu` |
+| Scheme | `http` |
+| Forward Hostname | `canvas-proxy` |
+| Forward Port | `8000` |
+| Block Common Exploits | on |
+| Websockets Support | off |
+| SSL | request a Let's Encrypt certificate, Force SSL on |
+
+NPM must be on the `web` network too — it resolves `canvas-proxy` by container
+name. Then set in `.env`, to match the domain exactly:
+
+```
+PROXY_BASE_URL=https://canvas-proxy.example.edu
+DJANGO_ALLOWED_HOSTS=canvas-proxy.example.edu
+CSRF_TRUSTED_ORIGINS=https://canvas-proxy.example.edu
+```
+
+`PROXY_BASE_URL` is what the proxy tells Canvas its redirect URI is, so it has
+to match the developer keys exactly, https included.
+
+### First staff account
+
+```bash
+docker compose exec canvas-proxy python manage.py createsuperuser
+```
+
+### Two failure modes worth recognising
+
+- **Every form POST returns a bare 403.** Cookies are marked `Secure` but the
+  app is being served over plain http. Either finish the TLS setup, or set
+  `SECURE_COOKIES=0` and `SECURE_SSL_REDIRECT=0` while testing.
+- **The browser bounces between http and https forever.** `SECURE_SSL_REDIRECT`
+  is on with no TLS terminator in front, or NPM isn't sending
+  `X-Forwarded-Proto`. Check `BEHIND_TLS_PROXY=1`.
+
+### Verifying the image
+
+```bash
+./tools/e2e/run-docker.sh
+```
+
+Builds the image, brings up the whole stack under a separate compose project
+against a stand-in Canvas, drives the full authorization chain over HTTP, and
+tears itself down. It never touches your `.env` or a running deployment.
 
 ---
 
@@ -223,7 +298,7 @@ the app's own page, and to reviewers.
 Run daily from cron:
 
 ```bash
-.venv/bin/python manage.py prune_expired
+docker compose exec -T canvas-proxy python manage.py prune_expired
 ```
 
 Deletes spent authorization state, long-dead tokens, and request logs past
@@ -247,16 +322,18 @@ Two things worth knowing:
 .venv/bin/python manage.py test
 ```
 
-140 tests, no network access — Canvas is mocked at the `canvasclient` boundary.
+141 tests, no network access — Canvas is mocked at the `canvasclient` boundary.
 They cover the full authorization chain, tier enforcement, header and query
 filtering, pagination rewriting, code/refresh replay handling, PKCE, the
 approval workflow, and ownership boundaries on the dashboard.
 
-There is also an end-to-end check that runs a stand-in Canvas and a real Django
-server and drives the whole chain over HTTP, against a throwaway database:
+There are also two end-to-end checks that run a stand-in Canvas and drive the
+whole chain over HTTP against a throwaway database — one against a plain Django
+server, one against the built container image:
 
 ```bash
-./tools/e2e/run.sh
+./tools/e2e/run.sh          # source
+./tools/e2e/run-docker.sh   # the image, with Postgres and Redis
 ```
 
 It asserts the things unit tests can't quite reach — that the Canvas token never
@@ -276,5 +353,8 @@ oauth/         authorize / callback / token / revoke, grant + token storage
 gateway/       the proxy view, tier enforcement, rate limiting, audit log
 canvasclient/  Canvas OAuth + REST wrapper, encryption helpers
 templates/     dashboard, consent screen
-tools/e2e/     fake Canvas + live-server integration check
+tools/e2e/     fake Canvas + live-server integration checks
+Dockerfile     gunicorn image, statics baked in at build
+docker-compose.yml        app + Postgres + Redis, on the `web` network
+docker-compose.smoke.yml  verification overlay, adds the stand-in Canvas
 ```

@@ -6,6 +6,7 @@ app_name = "registry"
 
 urlpatterns = [
     path("", views.home, name="home"),
+    path("healthz", views.healthz, name="healthz"),
     path("apps/", views.app_list, name="app_list"),
     path("apps/new", views.app_create, name="app_create"),
     path("apps/<int:pk>/", views.app_detail, name="app_detail"),

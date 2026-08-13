@@ -1,0 +1,8 @@
+-r requirements.txt
+
+gunicorn>=21.2
+whitenoise>=6.6
+psycopg[binary]>=3.1
+# Client for django.core.cache.backends.redis.RedisCache, which
+# docker-compose.yml selects.
+redis>=5.0
