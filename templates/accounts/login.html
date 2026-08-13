@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<h1>Sign in</h1>
+<p class="lede">Developers sign in with the Canvas account at {{ canvas_base_url }}.</p>
+
+<div class="panel">
+  <form method="post" action="{% url 'accounts:canvas_start' %}">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="btn" type="submit">Continue with Canvas</button>
+  </form>
+  <p class="small muted" style="margin-bottom:0">
+    This asks Canvas who you are and nothing else. The token it returns is used
+    for one profile lookup and then revoked.
+  </p>
+</div>
+
+<p class="small muted">
+  Staff accounts can also sign in at <a href="/admin/">the admin</a> with a password.
+</p>
+{% endblock %}

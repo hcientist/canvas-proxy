@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Canvas API Proxy</h1>
+<p class="lede">
+  Register an app, get it approved, and call the Canvas API through this host
+  without ever holding a Canvas developer key.
+</p>
+
+<div class="panel">
+  <h2 style="margin-top:0">How it works</h2>
+  <ol class="small">
+    <li>Sign in with your Canvas account and register an app: a name, your redirect URIs, and the access level you need.</li>
+    <li>A staff member reviews it. Once approved, your <code>client_id</code> and <code>client_secret</code> become usable.</li>
+    <li>Run a normal OAuth2 authorization-code flow against <code>{{ proxy_base_url }}/oauth2/auth</code>.</li>
+    <li>Call <code>{{ proxy_base_url }}/api/v1/...</code> with the token you get back. The proxy forwards to
+        <code>{{ canvas_base_url }}</code> using its own developer key.</li>
+  </ol>
+  <p class="small muted" style="margin-bottom:0">
+    The real Canvas token is created and held here, and is never sent to your app.
+    Revoking your app's approval cuts off its access immediately.
+  </p>
+</div>
+
+<h2>Access levels</h2>
+{% for tier in tiers %}
+  <div class="panel tight">
+    <strong>{{ tier.name }}</strong>
+    {% if not tier.is_configured %}<span class="badge pending">not configured</span>{% endif %}
+    <p class="small muted" style="margin:6px 0 0">{{ tier.description }}</p>
+    {% if tier.allowed_methods %}
+      <p class="small muted" style="margin:6px 0 0">
+        Methods: {% for m in tier.allowed_methods %}<code>{{ m }}</code> {% endfor %}
+      </p>
+    {% endif %}
+  </div>
+{% empty %}
+  <p class="empty">No access levels have been configured yet.</p>
+{% endfor %}
+
+<h2>Endpoints</h2>
+<div class="panel">
+  <dl class="kv">
+    <dt>Authorization</dt><dd><code>{{ proxy_base_url }}/oauth2/auth</code></dd>
+    <dt>Token</dt><dd><code>{{ proxy_base_url }}/oauth2/token</code></dd>
+    <dt>Revocation</dt><dd><code>{{ proxy_base_url }}/oauth2/revoke</code></dd>
+    <dt>API base</dt><dd><code>{{ proxy_base_url }}/api/v1/</code></dd>
+    <dt>Metadata</dt><dd><code>{{ proxy_base_url }}/oauth2/metadata</code></dd>
+  </dl>
+</div>
+
+<div class="actions">
+  {% if user.is_authenticated %}
+    <a class="btn" href="{% url 'registry:app_create' %}">Register an app</a>
+  {% else %}
+    <a class="btn" href="{% url 'accounts:login' %}">Sign in with Canvas</a>
+  {% endif %}
+</div>
+{% endblock %}

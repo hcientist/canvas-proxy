@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}{{ app.name }}{% endblock %}
+{% block content %}
+<h1>{{ app.name }} <span class="badge {{ app.status }}">{{ app.get_status_display }}</span></h1>
+<p class="lede">{{ app.tier.name }} &middot; owned by {{ app.owner.display_name }}</p>
+
+{% if revealed_secret %}
+  <div class="panel">
+    <h3 style="margin-top:0">Client secret</h3>
+    <p class="small">Copy this now. It is shown once and cannot be recovered.</p>
+    <div class="secret">{{ revealed_secret }}</div>
+  </div>
+{% endif %}
+
+{% if app.status == 'rejected' or app.status == 'suspended' %}
+  <div class="panel tight">
+    <strong>Reviewer notes</strong>
+    <p class="small" style="margin:6px 0 0">{{ app.review_notes|default:"No notes were left." }}</p>
+  </div>
+{% endif %}
+
+<div class="panel">
+  <dl class="kv">
+    <dt>Client ID</dt><dd><code>{{ app.client_id }}</code></dd>
+    <dt>Client type</dt>
+    <dd>{% if app.is_public_client %}Public (PKCE required, no secret){% else %}Confidential{% if app.client_secret_hint %} &middot; secret ends <code>{{ app.client_secret_hint }}</code>{% endif %}{% endif %}</dd>
+    <dt>Access level</dt><dd>{{ app.tier.name }}<br><span class="small muted">{{ app.tier.description }}</span></dd>
+    <dt>Redirect URIs</dt>
+    <dd>{% for uri in app.redirect_uris %}<code>{{ uri }}</code><br>{% empty %}<span class="muted">None</span>{% endfor %}</dd>
+    {% if app.description %}<dt>Description</dt><dd>{{ app.description }}</dd>{% endif %}
+    {% if app.reviewed_at %}<dt>Reviewed</dt><dd>{{ app.reviewed_at }} by {{ app.reviewed_by.display_name|default:"—" }}</dd>{% endif %}
+    <dt>Created</dt><dd>{{ app.created_at }}</dd>
+  </dl>
+</div>
+
+{% if can_edit %}
+<div class="actions" style="margin-bottom:22px">
+  <a class="btn secondary" href="{% url 'registry:app_edit' app.pk %}">Edit</a>
+  {% if app.status == 'draft' or app.status == 'rejected' %}
+    <form method="post" action="{% url 'registry:app_submit' app.pk %}" style="margin:0">
+      {% csrf_token %}<button class="btn" type="submit">Submit for review</button>
+    </form>
+  {% endif %}
+  {% if not app.is_public_client %}
+    <form method="post" action="{% url 'registry:app_rotate_secret' app.pk %}" style="margin:0"
+          onsubmit="return confirm('Rotating the secret breaks anything using the old one. Continue?')">
+      {% csrf_token %}<button class="btn secondary" type="submit">Rotate secret</button>
+    </form>
+  {% endif %}
+  <form method="post" action="{% url 'registry:app_revoke_grants' app.pk %}" style="margin:0"
+        onsubmit="return confirm('Revoke every Canvas grant this app holds? Users will have to authorize again.')">
+    {% csrf_token %}<button class="btn secondary" type="submit">Revoke all grants</button>
+  </form>
+  <form method="post" action="{% url 'registry:app_delete' app.pk %}" style="margin:0"
+        onsubmit="return confirm('Delete this app and revoke its grants? This cannot be undone.')">
+    {% csrf_token %}<button class="btn danger" type="submit">Delete app</button>
+  </form>
+</div>
+{% endif %}
+
+{% if app.status == 'approved' %}
+<h2>Using this app</h2>
+<div class="panel">
+  <h3 style="margin-top:0">1. Send the user to authorize</h3>
+  <pre><code>{{ proxy_base_url }}/oauth2/auth
+  ?client_id={{ app.client_id }}
+  &amp;response_type=code
+  &amp;redirect_uri={{ app.default_redirect_uri|urlencode }}
+  &amp;state=&lt;random&gt;{% if app.is_public_client %}
+  &amp;code_challenge=&lt;s256 of verifier&gt;
+  &amp;code_challenge_method=S256{% endif %}</code></pre>
+
+  <h3>2. Exchange the code</h3>
+  <pre><code>curl -X POST {{ proxy_base_url }}/oauth2/token \
+  -d grant_type=authorization_code \
+  -d client_id={{ app.client_id }} \{% if app.is_public_client %}
+  -d code_verifier=&lt;verifier&gt; \{% else %}
+  -d client_secret=&lt;secret&gt; \{% endif %}
+  -d redirect_uri={{ app.default_redirect_uri }} \
+  -d code=&lt;code&gt;</code></pre>
+
+  <h3>3. Call the API</h3>
+  <pre><code>curl {{ proxy_base_url }}/api/v1/users/self/profile \
+  -H "Authorization: Bearer &lt;access_token&gt;"</code></pre>
+  <p class="small muted" style="margin-bottom:0">
+    Any path under <code>/api/</code> maps to the same path on {{ canvas_base_url }}.
+    Pagination <code>Link</code> headers come back pointing at this proxy.
+  </p>
+</div>
+{% endif %}
+
+<h2>Active grants ({{ grants|length }})</h2>
+<div class="panel">
+  {% if grants %}
+    <table>
+      <thead><tr><th>Canvas user</th><th>Authorized</th><th>Last used</th></tr></thead>
+      <tbody>
+        {% for grant in grants %}
+          <tr>
+            <td>{{ grant.canvas_user_name|default:"—" }} <span class="muted small">#{{ grant.canvas_user_id }}</span></td>
+            <td class="small">{{ grant.created_at }}</td>
+            <td class="small">{{ grant.last_used_at|default:"never" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty" style="margin:0">No users have authorized this app yet.</p>
+  {% endif %}
+</div>
+
+<h2>Recent API calls</h2>
+<div class="panel">
+  {% if recent_calls %}
+    <table>
+      <thead><tr><th>When</th><th>Request</th><th>Status</th><th>ms</th></tr></thead>
+      <tbody>
+        {% for call in recent_calls %}
+          <tr>
+            <td class="small">{{ call.created_at }}</td>
+            <td class="small"><code>{{ call.method }} {{ call.path }}</code>
+              {% if call.denied_reason %}<br><span class="muted">{{ call.denied_reason }}</span>{% endif %}</td>
+            <td>{{ call.status_code|default:"—" }}</td>
+            <td>{{ call.duration_ms|default:"—" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty" style="margin:0">No requests have been proxied for this app yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

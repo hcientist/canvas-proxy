@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Review {{ app.name }}{% endblock %}
+{% block content %}
+<h1>{{ app.name }} <span class="badge {{ app.status }}">{{ app.get_status_display }}</span></h1>
+<p class="lede">Submitted by {{ app.owner.display_name }}{% if app.owner.canvas_login_id %} ({{ app.owner.canvas_login_id }}){% endif %}.</p>
+
+<div class="panel">
+  <dl class="kv">
+    <dt>Requested access</dt>
+    <dd><strong>{{ app.tier.name }}</strong><br><span class="small muted">{{ app.tier.description }}</span></dd>
+    <dt>Stated purpose</dt><dd>{{ app.description|default:"—"|linebreaksbr }}</dd>
+    <dt>Redirect URIs</dt>
+    <dd>{% for uri in app.redirect_uris %}<code>{{ uri }}</code><br>{% empty %}<span class="muted">None</span>{% endfor %}</dd>
+    <dt>Client type</dt>
+    <dd>{% if app.is_public_client %}Public (PKCE){% else %}Confidential{% endif %}</dd>
+    {% if app.homepage_url %}<dt>Homepage</dt><dd><a href="{{ app.homepage_url }}" rel="noopener noreferrer">{{ app.homepage_url }}</a></dd>{% endif %}
+    <dt>Client ID</dt><dd><code>{{ app.client_id }}</code></dd>
+    <dt>Submitted</dt><dd>{{ app.submitted_at|default:"—" }}</dd>
+    <dt>Active grants</dt><dd>{{ active_grants }}</dd>
+  </dl>
+</div>
+
+<h2>What to check</h2>
+<div class="panel tight">
+  <ul class="small" style="margin:0; padding-left:18px">
+    <li>Every redirect URI is a host the owner actually controls &mdash; an attacker-controlled URI here means stolen Canvas access.</li>
+    <li>The stated purpose justifies this tier and not a narrower one.</li>
+    <li>A public client cannot hold a secret; a server-side app should not be registered as one.</li>
+  </ul>
+</div>
+
+{% if sibling_apps %}
+  <h2>Owner's other apps</h2>
+  <div class="panel">
+    <table>
+      <thead><tr><th>App</th><th>Access level</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for other in sibling_apps %}
+          <tr>
+            <td><a href="{% url 'registry:review_app' other.pk %}">{{ other.name }}</a></td>
+            <td>{{ other.tier.name }}</td>
+            <td><span class="badge {{ other.status }}">{{ other.get_status_display }}</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+
+{% if recent_calls %}
+  <h2>Recent API calls</h2>
+  <div class="panel">
+    <table>
+      <thead><tr><th>When</th><th>Request</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for call in recent_calls %}
+          <tr>
+            <td class="small">{{ call.created_at }}</td>
+            <td class="small"><code>{{ call.method }} {{ call.path }}</code></td>
+            <td>{{ call.status_code|default:"—" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+
+<h2>Decision</h2>
+<div class="panel">
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <p class="small muted">Suspending revokes every Canvas grant the app currently holds.</p>
+    <div class="actions">
+      <button class="btn" type="submit">Record decision</button>
+      <a class="btn secondary" href="{% url 'registry:review_queue' %}">Back to queue</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

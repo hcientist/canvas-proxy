@@ -1,0 +1,126 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Canvas API Proxy{% endblock %}</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --ink: #1b1f24; --muted: #5b6672;
+    --line: #dfe3e8; --accent: #16527d; --accent-ink: #fff;
+    --ok: #1d6f42; --warn: #8a5a00; --bad: #a32020;
+    --radius: 6px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--accent); }
+  header.site {
+    background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header.site .inner, main { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+  header.site .inner {
+    display: flex; align-items: center; gap: 22px; height: 56px;
+  }
+  header.site .brand { font-weight: 650; text-decoration: none; color: var(--ink); }
+  header.site nav { display: flex; gap: 18px; margin-left: auto; align-items: center; }
+  header.site nav a { text-decoration: none; font-size: 14px; }
+  main { padding-top: 28px; padding-bottom: 60px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 30px 0 10px; }
+  h3 { font-size: 15px; margin: 22px 0 8px; }
+  p.lede { color: var(--muted); margin-top: 0; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 20px; margin-bottom: 18px;
+  }
+  .panel.tight { padding: 14px 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  tr:last-child td { border-bottom: 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  code { background: #eef1f4; padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: #12181f; color: #e6edf3; padding: 14px 16px;
+    border-radius: var(--radius); overflow-x: auto; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  .btn {
+    display: inline-block; background: var(--accent); color: var(--accent-ink);
+    border: 1px solid var(--accent); padding: 7px 14px; border-radius: var(--radius);
+    text-decoration: none; font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+  .btn.secondary { background: var(--panel); color: var(--ink); border-color: var(--line); }
+  .btn.danger { background: var(--bad); border-color: var(--bad); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .badge {
+    display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: 20px;
+    border: 1px solid var(--line); background: #eef1f4; color: var(--muted);
+  }
+  .badge.approved { background: #e6f4ec; color: var(--ok); border-color: #bfe0cd; }
+  .badge.pending  { background: #fdf3e0; color: var(--warn); border-color: #ecd9b0; }
+  .badge.rejected, .badge.suspended { background: #fbeaea; color: var(--bad); border-color: #eec4c4; }
+  .messages { list-style: none; padding: 0; margin: 0 0 18px; }
+  .messages li {
+    padding: 10px 14px; border-radius: var(--radius); margin-bottom: 8px;
+    border: 1px solid var(--line); background: var(--panel);
+  }
+  .messages li.success { border-color: #bfe0cd; background: #e9f6ef; }
+  .messages li.warning { border-color: #ecd9b0; background: #fdf5e6; }
+  .messages li.error   { border-color: #eec4c4; background: #fceded; }
+  form p { margin: 0 0 16px; }
+  label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  input[type=text], input[type=url], input[type=password], textarea, select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: var(--radius); font: inherit; background: #fff;
+  }
+  .helptext { display: block; color: var(--muted); font-size: 13px; margin-top: 4px; }
+  ul.errorlist { color: var(--bad); font-size: 13px; padding-left: 18px; margin: 4px 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .kv { display: grid; grid-template-columns: 190px 1fr; gap: 8px 16px; font-size: 14px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; word-break: break-all; }
+  .secret {
+    background: #12181f; color: #7ee787; padding: 12px 14px;
+    border-radius: var(--radius); word-break: break-all; font-family: ui-monospace, monospace;
+  }
+  .empty { color: var(--muted); padding: 14px 0; }
+</style>
+</head>
+<body>
+<header class="site">
+  <div class="inner">
+    <a class="brand" href="{% url 'registry:home' %}">Canvas API Proxy</a>
+    <nav>
+      {% if user.is_authenticated %}
+        <a href="{% url 'registry:app_list' %}">My apps</a>
+        {% if user.is_staff %}
+          <a href="{% url 'registry:review_queue' %}">Review{% if pending_review_count %} ({{ pending_review_count }}){% endif %}</a>
+          <a href="/admin/">Admin</a>
+        {% endif %}
+        <span class="muted small">{{ user.display_name }}</span>
+        <form method="post" action="{% url 'accounts:logout' %}" style="margin:0">
+          {% csrf_token %}
+          <button class="btn secondary" type="submit">Sign out</button>
+        </form>
+      {% else %}
+        <a href="{% url 'accounts:login' %}">Sign in</a>
+      {% endif %}
+    </nav>
+  </div>
+</header>
+<main>
+  {% if messages %}
+    <ul class="messages">
+      {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

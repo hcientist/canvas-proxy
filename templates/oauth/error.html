@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Authorization error{% endblock %}
+{% block content %}
+<h1>Authorization error</h1>
+<div class="panel">
+  <p style="margin-top:0"><strong>{{ message }}</strong></p>
+  {% if detail %}<p class="small muted" style="margin-bottom:0">{{ detail }}</p>{% endif %}
+</div>
+<p class="small muted">
+  Nothing was shared with the app that sent you here. If you are that app's
+  developer, check its registration on this proxy.
+</p>
+{% endblock %}

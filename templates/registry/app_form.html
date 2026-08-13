@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{% if app %}Edit {{ app.name }}{% else %}Register an app{% endif %}{% endblock %}
+{% block content %}
+<h1>{% if app %}Edit {{ app.name }}{% else %}Register an app{% endif %}</h1>
+<p class="lede">
+  {% if app %}
+    Changing the access level, redirect URIs, or client type sends an approved
+    app back for review.
+  {% else %}
+    You will get a client ID immediately; the app becomes usable once a staff
+    member approves it.
+  {% endif %}
+</p>
+
+<div class="panel">
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <div class="actions">
+      <button class="btn" type="submit">{% if app %}Save changes{% else %}Create app{% endif %}</button>
+      <a class="btn secondary" href="{% if app %}{% url 'registry:app_detail' app.pk %}{% else %}{% url 'registry:app_list' %}{% endif %}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
