@@ -1,6 +1,7 @@
 Django>=5.0,<6.0
 requests>=2.31
 cryptography>=42.0
+django-environ~=0.14.0
 
 # Production extras (uncomment as needed)
 # gunicorn>=21.2

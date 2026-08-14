@@ -26,7 +26,7 @@ SESSION_NEXT_KEY = "canvas_login_next"
 
 # Scopes needed purely to learn who is signing in. If your developer keys
 # enforce scopes, the login tier's key must include these.
-LOGIN_SCOPES = ["url:GET|/api/v1/users/:id/profile"]
+LOGIN_SCOPES = ["url:GET|/api/v1/users/:user_id/profile"]
 
 
 def login_view(request):
@@ -56,10 +56,17 @@ def canvas_login_start(request):
     request.session[SESSION_STATE_KEY] = state
     request.session[SESSION_NEXT_KEY] = _safe_next(request.POST.get("next", ""))
 
+    redirect_uri = dashboard_redirect_uri()
+    logger.info(
+        "Canvas login: client_id=%s redirect_uri=%s",
+        tier.canvas_client_id,
+        redirect_uri,
+    )
+
     return redirect(
         client.authorize_url(
             client_id=tier.canvas_client_id,
-            redirect_uri=dashboard_redirect_uri(),
+            redirect_uri=redirect_uri,
             state=state,
             scopes=LOGIN_SCOPES if tier.enforces_scopes else (),
         )
@@ -67,7 +74,7 @@ def canvas_login_start(request):
 
 
 def dashboard_redirect_uri():
-    return f"{settings.PROXY_BASE_URL}/login/canvas/callback"
+    return f"{settings.PROXY_BASE_URL}/accounts/canvas/login/callback/"
 
 
 def _safe_next(value):

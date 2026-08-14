@@ -7,8 +7,22 @@ import os
 import sys
 from pathlib import Path
 
+import environ
+import os
+
+env = environ.Env(
+    # set casting, default value
+    DEBUG=(bool, False)
+)
+
+# Set the project base directory
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Take environment variables from .env file
+environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
+
+# False if not in os.environ because of casting above
+DEBUG = env('DEBUG')
 TESTING = "test" in sys.argv or bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
@@ -36,7 +50,6 @@ def env_list(name, default=()):
 # --- Core -------------------------------------------------------------------
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", "insecure-dev-key-do-not-use-in-production")
-DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", ["localhost", "127.0.0.1"])
 
 # The container healthcheck dials the app on loopback, so loopback always has to
@@ -69,9 +82,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    # Serves /static/ from the container, since the reverse proxy in front of
-    # this app only forwards -- it has no access to the collected files.
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    # WhiteNoise serves /static/ in production; Django's dev server handles it
+    # when DEBUG is on, so the middleware is only loaded in production.
+    *((["whitenoise.middleware.WhiteNoiseMiddleware"]) if not DEBUG else []),
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -128,7 +141,7 @@ else:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "accounts.User"
-LOGIN_URL = "/login/"
+LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/apps/"
 LOGOUT_REDIRECT_URL = "/"
 

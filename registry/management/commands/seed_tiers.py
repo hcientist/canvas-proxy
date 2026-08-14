@@ -44,7 +44,7 @@ TIERS = [
             r"^/api/v1/users/\d+/logins",
         ],
         "scopes": [
-            "url:GET|/api/v1/users/:id/profile",
+            "url:GET|/api/v1/users/:user_id/profile",
             "url:GET|/api/v1/users/:user_id/courses",
             "url:GET|/api/v1/courses",
             "url:GET|/api/v1/courses/:id",
@@ -83,7 +83,7 @@ TIERS = [
             r"^/api/v1/.*/sis_imports",
         ],
         "scopes": [
-            "url:GET|/api/v1/users/:id/profile",
+            "url:GET|/api/v1/users/:user_id/profile",
             "url:GET|/api/v1/courses",
             "url:GET|/api/v1/courses/:id",
             "url:GET|/api/v1/courses/:course_id/assignments",
@@ -162,5 +162,5 @@ class Command(BaseCommand):
             self.stdout.write("")
             self.stdout.write(
                 "Each developer key in Canvas must list this redirect URI:\n"
-                "  <PROXY_BASE_URL>/oauth2/canvas/callback"
+                "  <PROXY_BASE_URL>/accounts/canvas/login/callback/"
             )

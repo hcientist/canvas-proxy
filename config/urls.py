@@ -5,7 +5,7 @@ from oauth import views as oauth_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("", include("accounts.urls")),
+    path("accounts/", include("accounts.urls")),
     path("oauth2/", include("oauth.urls")),
     path(
         ".well-known/oauth-authorization-server",
