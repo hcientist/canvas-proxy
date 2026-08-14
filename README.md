@@ -75,8 +75,10 @@ Generate the encryption key that protects stored Canvas tokens:
 In Canvas: **Admin → Developer Keys → + Developer Key → + API Key**. Create one
 per tier. Each one needs:
 
-- **Redirect URIs**: `https://your-proxy-host/oauth2/canvas/callback` (this
-  single URI, for all three keys)
+- **Redirect URIs**: `https://your-proxy-host/oauth2/canvas/callback` — this one
+  URI, on all three keys, in the multi-line *Redirect URIs* box rather than the
+  legacy single-value field. Canvas matches it exactly, so a missing or extra
+  trailing slash fails. `check_canvas_keys` below verifies this for you.
 - **Scopes**: tick *Enforce Scopes* and select the scopes appropriate to that
   tier. The `full` tier's key is the one to leave unscoped, if you want one.
 
@@ -153,6 +155,18 @@ CSRF_TRUSTED_ORIGINS=https://canvas-proxy.example.edu
 
 `PROXY_BASE_URL` is what the proxy tells Canvas its redirect URI is, so it has
 to match the developer keys exactly, https included.
+
+### Check the developer keys
+
+```bash
+docker compose exec canvas-proxy python manage.py check_canvas_keys
+```
+
+Asks Canvas to start an authorization for each tier and reports what it says.
+No user is involved and no flow is completed, so it is safe to run any time.
+It distinguishes the two mistakes that look identical from the outside — a key
+Canvas doesn't recognise, and a key whose Redirect URIs don't include this
+proxy's callback.
 
 ### First staff account
 
