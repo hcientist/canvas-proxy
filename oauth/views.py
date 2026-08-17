@@ -5,9 +5,14 @@ client from Canvas's point of view. The chain for one authorization is:
 
     app  -> GET  /oauth2/auth        (consent screen naming the app)
          -> Canvas /login/oauth2/auth (real Canvas consent, proxy's dev key)
-         -> GET  /oauth2/canvas/callback
+         -> GET  /accounts/canvas/login/callback/
          -> app's redirect_uri?code=...
          -> POST /oauth2/token       (app swaps code for a proxy token)
+
+Canvas returns to the same callback that dashboard sign-in uses, so a developer
+key needs only one redirect URI registered. `accounts.views.canvas_login_callback`
+is the entry point and hands authorizations here, recognising them by the state
+this module recorded when the flow began.
 """
 
 import base64
@@ -19,6 +24,7 @@ from django.conf import settings
 from django.db import transaction
 from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -40,8 +46,13 @@ IDENTITY_SCOPES = ["url:GET|/api/v1/users/:user_id/profile"]
 
 
 def canvas_redirect_uri():
-    """The single redirect URI every Canvas developer key must be given."""
-    return f"{settings.PROXY_BASE_URL}/oauth2/canvas/callback"
+    """The single redirect URI every Canvas developer key must be given.
+
+    Dashboard sign-in and app authorization both come back here, so a key needs
+    only this one URI registered. Derived from the URLconf rather than written
+    out, so the two cannot drift apart.
+    """
+    return f"{settings.PROXY_BASE_URL}{reverse('accounts:canvas_callback')}"
 
 
 def _signing_tier(app):

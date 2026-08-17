@@ -53,7 +53,7 @@ class ExternalAuthorizationTests(TestCase):
             client, "exchange_code", return_value=dict(CANVAS_TOKEN_PAYLOAD)
         ), mock.patch.object(client, "revoke", return_value=True) as revoke:
             response = self.client.get(
-                reverse("oauth:canvas_callback"),
+                reverse("accounts:canvas_callback"),
                 {"code": "canvas-code", "state": auth_request.proxy_state},
             )
         self.revoke_mock = revoke

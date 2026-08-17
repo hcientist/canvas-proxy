@@ -31,7 +31,7 @@ only to establish who the user is — see [External APIs](#external-non-canvas-a
                                       └─────────────────────►  /login/oauth2/auth
                                                                 (tier's dev key)
                                                                       │
-                                GET /oauth2/canvas/callback  ◄────────┘
+                     GET /accounts/canvas/login/callback/ ◄────────┘
                                 exchange code for a real
                                 Canvas token, store it
                                 encrypted, mint our own
@@ -79,10 +79,14 @@ Generate the encryption key that protects stored Canvas tokens:
 In Canvas: **Admin → Developer Keys → + Developer Key → + API Key**. Create one
 per tier. Each one needs:
 
-- **Redirect URIs**: `https://your-proxy-host/oauth2/canvas/callback` — this one
-  URI, on all three keys, in the multi-line *Redirect URIs* box rather than the
-  legacy single-value field. Canvas matches it exactly, so a missing or extra
-  trailing slash fails. `check_canvas_keys` below verifies this for you.
+- **Redirect URIs**: `https://your-proxy-host/accounts/canvas/login/callback/`
+  — this one URI and nothing else, on all three keys, in the multi-line
+  *Redirect URIs* box rather than the legacy single-value field. Canvas matches
+  it exactly, so a missing or extra trailing slash fails. `check_canvas_keys`
+  below verifies this for you.
+
+  Dashboard sign-in and app authorization both return to this address; the
+  proxy tells them apart by the `state` it issued, so one URI covers both.
 - **Scopes**: tick *Enforce Scopes* and select the scopes appropriate to that
   tier. The `full` tier's key is the one to leave unscoped, if you want one.
 

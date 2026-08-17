@@ -62,7 +62,8 @@ for _loopback in ("127.0.0.1", "localhost"):
         ALLOWED_HOSTS.append(_loopback)
 
 # Public origin of this proxy. Every Canvas developer key must list
-# {PROXY_BASE_URL}/oauth2/canvas/callback as a redirect URI.
+# {PROXY_BASE_URL}/accounts/canvas/login/callback/ as a redirect URI, which is
+# the only one needed -- sign-in and app authorization share that callback.
 PROXY_BASE_URL = env("PROXY_BASE_URL", "http://localhost:8000").rstrip("/")
 
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [PROXY_BASE_URL])

@@ -12,10 +12,13 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, login, logout
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from canvasclient import client
+from oauth import views as oauth_views
+from oauth.models import AuthorizationRequest
 from registry.models import AccessTier
 
 logger = logging.getLogger(__name__)
@@ -74,7 +77,13 @@ def canvas_login_start(request):
 
 
 def dashboard_redirect_uri():
-    return f"{settings.PROXY_BASE_URL}/accounts/canvas/login/callback/"
+    """Where Canvas returns users. The only redirect URI a developer key needs.
+
+    App authorizations come back to this same address; `canvas_login_callback`
+    tells the two apart. Derived from the URLconf so it cannot drift from the
+    route that actually serves it.
+    """
+    return f"{settings.PROXY_BASE_URL}{reverse('accounts:canvas_callback')}"
 
 
 def _safe_next(value):
@@ -85,6 +94,17 @@ def _safe_next(value):
 
 
 def canvas_login_callback(request):
+    """Canvas returns here for both flows; the state says which one this is.
+
+    An app authorization carries a state the proxy recorded in the database
+    when it started; a dashboard sign-in carries one held in the user's
+    session. Sharing the address is what lets a developer key get by with a
+    single registered redirect URI.
+    """
+    state = request.GET.get("state", "")
+    if state and AuthorizationRequest.objects.filter(proxy_state=state).exists():
+        return oauth_views.canvas_callback(request)
+
     expected_state = request.session.pop(SESSION_STATE_KEY, None)
     next_url = request.session.pop(SESSION_NEXT_KEY, "")
 

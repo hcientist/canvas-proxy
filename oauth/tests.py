@@ -57,7 +57,7 @@ class OAuthFlowTestCase(TestCase):
             client, "exchange_code", return_value=payload or dict(CANVAS_TOKEN_PAYLOAD)
         ) as exchange:
             response = self.client.get(
-                reverse("oauth:canvas_callback"),
+                reverse("accounts:canvas_callback"),
                 {"code": "canvas-code", "state": auth_request.proxy_state},
             )
         return response, exchange
@@ -142,7 +142,7 @@ class AuthorizeEndpointTests(OAuthFlowTestCase):
         self.assertEqual(query["client_id"], [self.tier.canvas_client_id])
         self.assertEqual(query["state"], [auth_request.proxy_state])
         self.assertEqual(
-            query["redirect_uri"], [f"{PROXY}/oauth2/canvas/callback"]
+            query["redirect_uri"], [f"{PROXY}/accounts/canvas/login/callback/"]
         )
 
     def test_the_apps_state_is_never_sent_to_canvas(self):
@@ -177,7 +177,7 @@ class CanvasCallbackTests(OAuthFlowTestCase):
         self.assertEqual(response.status_code, 302)
         exchange.assert_called_once()
         self.assertEqual(
-            exchange.call_args.kwargs["redirect_uri"], f"{PROXY}/oauth2/canvas/callback"
+            exchange.call_args.kwargs["redirect_uri"], f"{PROXY}/accounts/canvas/login/callback/"
         )
 
         location = urlsplit(response["Location"])
@@ -206,10 +206,23 @@ class CanvasCallbackTests(OAuthFlowTestCase):
         self.assertEqual(stored.code_digest, crypto.token_digest(raw_code))
 
     def test_unknown_state_is_refused(self):
+        # The shared callback cannot tell which flow an unrecognised state was
+        # meant for, so it falls through to the sign-in path and says so there.
         response = self.client.get(
-            reverse("oauth:canvas_callback"), {"code": "x", "state": "made-up"}
+            reverse("accounts:canvas_callback"), {"code": "x", "state": "made-up"}
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/accounts/login/", response["Location"])
+        self.assertFalse(CanvasGrant.objects.exists())
+
+    def test_the_callback_routes_an_app_authorization_not_a_sign_in(self):
+        self.start_authorization()
+        auth_request = AuthorizationRequest.objects.latest("created_at")
+        self.consent(auth_request)
+        response, _ = self.complete_canvas_callback(auth_request)
+        # Sent back to the app, not signed in to the dashboard.
+        self.assertTrue(response["Location"].startswith("https://app.example.edu/callback"))
+        self.assertNotIn("_auth_user_id", self.client.session)
 
     def test_state_cannot_be_replayed(self):
         self.start_authorization()
@@ -228,7 +241,7 @@ class CanvasCallbackTests(OAuthFlowTestCase):
             client, "exchange_code", side_effect=client.CanvasError("bad key")
         ):
             response = self.client.get(
-                reverse("oauth:canvas_callback"),
+                reverse("accounts:canvas_callback"),
                 {"code": "c", "state": auth_request.proxy_state},
             )
         self.assertEqual(response.status_code, 302)
@@ -240,7 +253,7 @@ class CanvasCallbackTests(OAuthFlowTestCase):
         auth_request = AuthorizationRequest.objects.latest("created_at")
         self.consent(auth_request)
         response = self.client.get(
-            reverse("oauth:canvas_callback"),
+            reverse("accounts:canvas_callback"),
             {"error": "access_denied", "state": auth_request.proxy_state},
         )
         self.assertIn("error=access_denied", response["Location"])
