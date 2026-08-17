@@ -374,23 +374,26 @@ class ProxyApp(models.Model):
         self.reviewed_by = None
         self.reviewed_at = None
 
-    def approve(self, reviewer, notes=""):
-        self.status = AppStatus.APPROVED
+    def _record_decision(self, status, reviewer, notes):
+        self.status = status
         self.reviewed_by = reviewer
         self.reviewed_at = timezone.now()
         self.review_notes = notes
         self.save(
             update_fields=["status", "reviewed_by", "reviewed_at", "review_notes", "updated_at"]
         )
+        # Which origins may call from a browser follows approval status, so a
+        # decision has to take effect now rather than when the cache expires.
+        # Imported here because the CORS helper reads this model.
+        from gateway.cors import forget_origins
+
+        forget_origins()
+
+    def approve(self, reviewer, notes=""):
+        self._record_decision(AppStatus.APPROVED, reviewer, notes)
 
     def reject(self, reviewer, notes=""):
-        self.status = AppStatus.REJECTED
-        self.reviewed_by = reviewer
-        self.reviewed_at = timezone.now()
-        self.review_notes = notes
-        self.save(
-            update_fields=["status", "reviewed_by", "reviewed_at", "review_notes", "updated_at"]
-        )
+        self._record_decision(AppStatus.REJECTED, reviewer, notes)
 
     def suspend(self, reviewer, notes=""):
         """Stop the app immediately and cut off every grant it holds.
@@ -400,13 +403,7 @@ class ProxyApp(models.Model):
         back upstream. Suspension is meant to end the app's access everywhere,
         not just to stop this proxy honouring it.
         """
-        self.status = AppStatus.SUSPENDED
-        self.reviewed_by = reviewer
-        self.reviewed_at = timezone.now()
-        self.review_notes = notes
-        self.save(
-            update_fields=["status", "reviewed_by", "reviewed_at", "review_notes", "updated_at"]
-        )
+        self._record_decision(AppStatus.SUSPENDED, reviewer, notes)
         for grant in self.grants.filter(revoked_at__isnull=True).select_related("tier"):
             grant.revoke(at_canvas=True)
 

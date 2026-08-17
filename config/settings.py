@@ -90,6 +90,9 @@ MIDDLEWARE = [
     # WhiteNoise falls through to Django for anything it has not collected, so
     # `runserver` still behaves normally with it in place.
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    # Early, so a CORS preflight is answered before auth or CSRF can reject it
+    # for lacking credentials it is not allowed to carry.
+    "gateway.cors.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",

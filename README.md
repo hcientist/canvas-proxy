@@ -267,6 +267,63 @@ of `https://api.example.com/v2` that request reaches
 `https://api.example.com/v2/some/endpoint`. `Link` headers pointing at the API
 come back rewritten to the proxy.
 
+### Worked example: an API that just wants a key
+
+Most APIs students reach for have no OAuth at all — they take a key in the
+query string or a header. Giphy is the usual shape:
+
+```
+https://api.giphy.com/v1/gifs/search?api_key=KEY&q=cheeseburgers
+```
+
+Register it as:
+
+| Field | Value |
+|---|---|
+| API base URL | `https://api.giphy.com/v1` |
+| Credential style | Query parameter |
+| Header/parameter name | `api_key` |
+| API secret / key | the Giphy key |
+| Methods | `GET` |
+
+The frontend then asks for the rest of the URL and nothing else:
+
+```js
+fetch("https://your-proxy-host/ext/gifs/search?q=cheeseburgers&limit=5", {
+  headers: { Authorization: `Bearer ${accessToken}` },
+})
+```
+
+and the proxy sends
+`https://api.giphy.com/v1/gifs/search?q=cheeseburgers&limit=5&api_key=KEY`.
+
+One registration covers the whole API — `/ext/gifs/trending` works the same way.
+The key stays server-side: it is never in the page, never in a response header,
+and never written to the audit log, which records only the caller's own query
+string. A caller that tries to supply `api_key` itself is refused rather than
+having it silently overridden.
+
+### Calling from a browser
+
+Frontends are the point of this, so the API surface sends CORS headers:
+`/ext/`, `/api/`, `/oauth2/token`, `/oauth2/revoke` and `/oauth2/metadata`.
+Preflights are answered directly and never reach the proxy view.
+
+The permitted origins are not configured separately — they are the origins of
+approved apps' **registered redirect URIs**. Anything trusted enough to receive
+an authorization code is trusted enough to read a response, and both come from
+the same reviewed list. So a frontend on `https://student.github.io` works as
+soon as a redirect URI on that origin is approved. Approving or suspending an
+app takes effect immediately rather than at the next cache expiry.
+
+The dashboard and consent screens are deliberately left out, and
+`Access-Control-Allow-Credentials` is never sent: authorization is by bearer
+token, so allowing cookies cross-origin would expose a signed-in dashboard
+session to every approved app's origin for no benefit.
+
+Browser apps should register as **public clients**, which requires PKCE and
+issues no client secret — a secret shipped to a browser is not a secret.
+
 The two prefixes are not interchangeable. A token for an external app is
 rejected at `/api/`, and a Canvas token is rejected at `/ext/`, so a Canvas
 grant can never be spent against an arbitrary third-party host.
@@ -397,13 +454,13 @@ Two things worth knowing:
 .venv/bin/python manage.py test
 ```
 
-224 tests, no network access — Canvas is mocked at the `canvasclient` boundary.
+247 tests, no network access — Canvas is mocked at the `canvasclient` boundary.
 They cover the full authorization chain, tier enforcement, header and query
 filtering, pagination rewriting, code/refresh replay handling, PKCE, the
 approval workflow, and ownership boundaries on the dashboard. For external
 apps they also cover the SSRF guard (private, loopback, link-local and
-mixed-answer DNS), each credential style, and the separation between the
-`/api/` and `/ext/` prefixes.
+mixed-answer DNS), each credential style, the separation between the `/api/`
+and `/ext/` prefixes, and CORS origin derivation.
 
 There are also two end-to-end checks that run a stand-in Canvas and drive the
 whole chain over HTTP against a throwaway database — one against a plain Django
