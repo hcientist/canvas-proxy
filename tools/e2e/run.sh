@@ -12,7 +12,7 @@ WORK="$(mktemp -d)"
 trap 'kill ${CANVAS_PID:-} ${PROXY_PID:-} 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 export DJANGO_SETTINGS_MODULE=config.settings
-export DJANGO_DEBUG=1
+export DEBUG=1
 export DJANGO_ALLOWED_HOSTS=127.0.0.1,localhost
 export PROXY_BASE_URL=http://127.0.0.1:8099
 export CANVAS_BASE_URL=http://127.0.0.1:9911

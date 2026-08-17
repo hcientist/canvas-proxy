@@ -82,9 +82,13 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    # WhiteNoise serves /static/ in production; Django's dev server handles it
-    # when DEBUG is on, so the middleware is only loaded in production.
-    *((["whitenoise.middleware.WhiteNoiseMiddleware"]) if not DEBUG else []),
+    # Always loaded, including under DEBUG. Only `runserver` serves static files
+    # itself, so making this conditional on DEBUG means a DEBUG=1 deployment
+    # under gunicorn returns 404 HTML for every asset -- which the browser
+    # reports as a confusing MIME-type error rather than a missing file.
+    # WhiteNoise falls through to Django for anything it has not collected, so
+    # `runserver` still behaves normally with it in place.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",

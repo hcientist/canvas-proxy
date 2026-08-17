@@ -29,7 +29,7 @@ export ENV_FILE="$WORK/.env"
 
 cat > "$WORK/.env" <<EOF
 DJANGO_SECRET_KEY=$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(50))')
-DJANGO_DEBUG=0
+DEBUG=0
 DJANGO_ALLOWED_HOSTS=127.0.0.1,localhost,canvas-proxy
 PROXY_BASE_URL=http://127.0.0.1:8099
 CSRF_TRUSTED_ORIGINS=http://127.0.0.1:8099
