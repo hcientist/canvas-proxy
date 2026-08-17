@@ -60,7 +60,9 @@ class CanvasSignInTests(TestCase):
         self.assertEqual(f"{location.scheme}://{location.netloc}", CANVAS)
         query = parse_qs(location.query)
         self.assertEqual(query["client_id"], [self.tier.canvas_client_id])
-        self.assertEqual(query["redirect_uri"], [f"{PROXY}/login/canvas/callback"])
+        self.assertEqual(
+            query["redirect_uri"], [f"{PROXY}/accounts/canvas/login/callback/"]
+        )
 
     def test_a_successful_callback_creates_the_user(self):
         self.start()

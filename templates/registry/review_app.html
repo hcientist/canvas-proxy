@@ -6,8 +6,19 @@
 
 <div class="panel">
   <dl class="kv">
-    <dt>Requested access</dt>
-    <dd><strong>{{ app.tier.name }}</strong><br><span class="small muted">{{ app.tier.description }}</span></dd>
+    <dt>Kind</dt><dd>{{ app.get_kind_display }}</dd>
+    {% if app.is_external %}
+      <dt>Requested upstream</dt>
+      <dd><strong><code>{{ app.api_base_url }}</code></strong></dd>
+      <dt>Methods</dt>
+      <dd>{% for m in app.allowed_methods %}<code>{{ m }}</code> {% empty %}<span class="muted">All</span>{% endfor %}</dd>
+      <dt>Credentials sent upstream</dt>
+      <dd>{{ app.get_credential_style_display }}{% if app.credential_name %} &middot; <code>{{ app.credential_name }}</code>{% endif %}
+          {% if app.has_upstream_credentials %}<br><span class="small muted">A secret is stored for this app.</span>{% endif %}</dd>
+    {% else %}
+      <dt>Requested access</dt>
+      <dd><strong>{{ app.tier.name }}</strong><br><span class="small muted">{{ app.tier.description }}</span></dd>
+    {% endif %}
     <dt>Stated purpose</dt><dd>{{ app.description|default:"—"|linebreaksbr }}</dd>
     <dt>Redirect URIs</dt>
     <dd>{% for uri in app.redirect_uris %}<code>{{ uri }}</code><br>{% empty %}<span class="muted">None</span>{% endfor %}</dd>
@@ -23,9 +34,15 @@
 <h2>What to check</h2>
 <div class="panel tight">
   <ul class="small" style="margin:0; padding-left:18px">
-    <li>Every redirect URI is a host the owner actually controls &mdash; an attacker-controlled URI here means stolen Canvas access.</li>
-    <li>The stated purpose justifies this tier and not a narrower one.</li>
+    <li>Every redirect URI is a host the owner actually controls &mdash; an attacker-controlled URI here means the app's access ends up in someone else's hands.</li>
     <li>A public client cannot hold a secret; a server-side app should not be registered as one.</li>
+    {% if app.is_external %}
+      <li>The API base URL is a service the owner is entitled to use, and the stated purpose matches it. Approving this makes the proxy call that host with the stored credentials, for any signed-in Canvas user.</li>
+      <li>The methods are no broader than the purpose needs &mdash; write access to a third-party API is granted here, not by that API.</li>
+      <li>The proxy already refuses private and loopback addresses, so this cannot reach the internal network. It cannot judge whether a public host is one the institution wants called.</li>
+    {% else %}
+      <li>The stated purpose justifies this tier and not a narrower one.</li>
+    {% endif %}
   </ul>
 </div>
 

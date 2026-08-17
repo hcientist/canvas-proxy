@@ -1,27 +1,49 @@
 {% extends "base.html" %}
 {% block title %}Authorize {{ app.name }}{% endblock %}
 {% block content %}
-<h1>{{ app.name }} wants access to your Canvas account</h1>
+{% if app.is_external %}
+  <h1>{{ app.name }} wants to confirm who you are</h1>
+{% else %}
+  <h1>{{ app.name }} wants access to your Canvas account</h1>
+{% endif %}
 <p class="lede">Registered by {{ app.owner.display_name }}.</p>
 
 <div class="panel">
   {% if app.description %}<p>{{ app.description }}</p>{% endif %}
 
   <dl class="kv">
-    <dt>Access level</dt>
-    <dd><strong>{{ tier.name }}</strong><br><span class="small muted">{{ tier.description }}</span></dd>
-    <dt>Canvas instance</dt><dd>{{ canvas_base_url }}</dd>
+    {% if app.is_external %}
+      <dt>What it reads from Canvas</dt>
+      <dd>Your name and Canvas user id, nothing else.</dd>
+      <dt>Where its requests go</dt>
+      <dd><code>{{ app.api_base_url }}</code><br>
+          <span class="small muted">Not a Canvas service. This proxy forwards the
+          app's requests there; your Canvas data is not sent with them.</span></dd>
+    {% else %}
+      <dt>Access level</dt>
+      <dd><strong>{{ tier.name }}</strong><br><span class="small muted">{{ tier.description }}</span></dd>
+      <dt>Canvas instance</dt><dd>{{ canvas_base_url }}</dd>
+    {% endif %}
     <dt>Returns you to</dt><dd><code>{{ auth_request.redirect_uri }}</code></dd>
     {% if app.homepage_url %}<dt>Homepage</dt><dd><a href="{{ app.homepage_url }}" rel="noopener noreferrer">{{ app.homepage_url }}</a></dd>{% endif %}
   </dl>
 </div>
 
 <div class="panel tight">
-  <p class="small" style="margin:0">
-    Continuing sends you to Canvas to sign in and confirm. This app never receives
-    your Canvas token &mdash; requests are made on its behalf by this proxy, limited
-    to the access level above, and you can have access revoked at any time.
-  </p>
+  {% if app.is_external %}
+    <p class="small" style="margin:0">
+      Continuing sends you to Canvas to sign in. This app is not given access to
+      your Canvas account &mdash; the proxy asks Canvas who you are, hands that
+      token straight back, and keeps only your name and user id. You can have
+      access revoked at any time.
+    </p>
+  {% else %}
+    <p class="small" style="margin:0">
+      Continuing sends you to Canvas to sign in and confirm. This app never receives
+      your Canvas token &mdash; requests are made on its behalf by this proxy, limited
+      to the access level above, and you can have access revoked at any time.
+    </p>
+  {% endif %}
 </div>
 
 <form method="post" action="{% url 'oauth:confirm' auth_request.id %}">

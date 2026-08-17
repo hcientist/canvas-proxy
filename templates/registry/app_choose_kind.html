@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Register an app{% endblock %}
+{% block content %}
+<h1>Register an app</h1>
+<p class="lede">What should this app be able to reach?</p>
+
+<div class="panel">
+  <h2 style="margin-top:0">The Canvas API</h2>
+  <p class="small">
+    Your app calls {{ canvas_base_url }} on a user's behalf. Users grant access
+    through Canvas, and the proxy holds the Canvas token so your app never does.
+    You choose one of these access levels:
+  </p>
+  <ul class="small">
+    {% for tier in tiers %}<li><strong>{{ tier.name }}</strong> &mdash; {{ tier.description }}</li>{% endfor %}
+  </ul>
+  <a class="btn" href="{% url 'registry:app_create' %}">Register a Canvas app</a>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">A different API</h2>
+  <p class="small">
+    Your app calls some other API &mdash; one you have a key for, or one that
+    needs no key at all. You supply the base URL and any credentials; the proxy
+    stores them encrypted and attaches them to each request, so your frontend
+    never ships an API key to the browser.
+  </p>
+  <p class="small muted">
+    Users still sign in through Canvas, so only people at this institution can
+    use your app. The proxy learns who they are and nothing else &mdash; it asks
+    Canvas for identity only, and hands that token straight back.
+  </p>
+  <a class="btn" href="{% url 'registry:app_create_external' %}">Register an external API app</a>
+</div>
+
+<p class="small muted">
+  Either way a staff member reviews the registration before it can be used.
+</p>
+{% endblock %}

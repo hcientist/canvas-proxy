@@ -50,7 +50,7 @@
 
 <div class="actions">
   {% if user.is_authenticated %}
-    <a class="btn" href="{% url 'registry:app_create' %}">Register an app</a>
+    <a class="btn" href="{% url 'registry:app_choose_kind' %}">Register an app</a>
   {% else %}
     <a class="btn" href="{% url 'accounts:login' %}">Sign in with Canvas</a>
   {% endif %}

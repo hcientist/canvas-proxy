@@ -62,20 +62,32 @@ class AuthorizationRequest(models.Model):
 
 
 class CanvasGrant(models.Model):
-    """A live Canvas token pair held on behalf of one end user for one app."""
+    """One end user's authorization of one app.
+
+    For a Canvas app this holds the live Canvas token pair, encrypted. For an
+    external app there is no Canvas token to hold -- Canvas is consulted only to
+    establish who the user is, and that token is revoked immediately -- so the
+    token fields stay empty and the row exists to bind proxy tokens to a
+    known Canvas identity, and to be revocable.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     app = models.ForeignKey(
         "registry.ProxyApp", on_delete=models.CASCADE, related_name="grants"
     )
     tier = models.ForeignKey(
-        "registry.AccessTier", on_delete=models.PROTECT, related_name="grants"
+        "registry.AccessTier",
+        on_delete=models.PROTECT,
+        related_name="grants",
+        null=True,
+        blank=True,
+        help_text="Canvas apps only; external apps have no developer key.",
     )
     canvas_user_id = models.CharField(max_length=64)
     canvas_user_name = models.CharField(max_length=255, blank=True)
     canvas_global_id = models.CharField(max_length=64, blank=True)
 
-    access_token_encrypted = models.TextField()
+    access_token_encrypted = models.TextField(blank=True)
     refresh_token_encrypted = models.TextField(blank=True)
     access_token_expires_at = models.DateTimeField(null=True, blank=True)
     scopes = models.JSONField(default=list, blank=True)
@@ -97,6 +109,10 @@ class CanvasGrant(models.Model):
     @property
     def is_active(self):
         return self.revoked_at is None
+
+    @property
+    def holds_canvas_token(self):
+        return bool(self.access_token_encrypted)
 
     @property
     def access_token(self):
@@ -152,6 +168,8 @@ class CanvasGrant(models.Model):
         return self.access_token
 
     def revoke(self, at_canvas=True):
+        # External-app grants never held a Canvas token, so there is nothing
+        # upstream to revoke -- only the proxy tokens issued against this row.
         if at_canvas and self.access_token_encrypted:
             client.revoke(self.access_token)
         self.revoked_at = timezone.now()

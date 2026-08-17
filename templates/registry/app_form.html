@@ -1,16 +1,33 @@
 {% extends "base.html" %}
 {% block title %}{% if app %}Edit {{ app.name }}{% else %}Register an app{% endif %}{% endblock %}
 {% block content %}
-<h1>{% if app %}Edit {{ app.name }}{% else %}Register an app{% endif %}</h1>
+<h1>
+  {% if app %}Edit {{ app.name }}
+  {% elif kind == 'external' %}Register an external API app
+  {% else %}Register a Canvas app{% endif %}
+</h1>
 <p class="lede">
   {% if app %}
-    Changing the access level, redirect URIs, or client type sends an approved
-    app back for review.
+    Changing where traffic goes, what is sent with it, the redirect URIs, or the
+    client type sends an approved app back for review.
+  {% elif kind == 'external' %}
+    The proxy will forward <code>/ext/&lt;path&gt;</code> to your API base URL
+    with <code>&lt;path&gt;</code> appended, attaching your credentials server-side.
   {% else %}
     You will get a client ID immediately; the app becomes usable once a staff
     member approves it.
   {% endif %}
 </p>
+
+{% if kind == 'external' %}
+  <div class="panel tight">
+    <p class="small" style="margin:0">
+      The API base URL must be https and must resolve to a public address.
+      The proxy refuses private and loopback addresses, so it cannot be pointed
+      at anything on the internal network.
+    </p>
+  </div>
+{% endif %}
 
 <div class="panel">
   <form method="post">
@@ -18,7 +35,7 @@
     {{ form.as_p }}
     <div class="actions">
       <button class="btn" type="submit">{% if app %}Save changes{% else %}Create app{% endif %}</button>
-      <a class="btn secondary" href="{% if app %}{% url 'registry:app_detail' app.pk %}{% else %}{% url 'registry:app_list' %}{% endif %}">Cancel</a>
+      <a class="btn secondary" href="{% if app %}{% url 'registry:app_detail' app.pk %}{% else %}{% url 'registry:app_choose_kind' %}{% endif %}">Cancel</a>
     </div>
   </form>
 </div>

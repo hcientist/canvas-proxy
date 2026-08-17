@@ -17,6 +17,7 @@ urlpatterns = [
     path("login/oauth2/auth", oauth_views.canvas_style_authorize),
     path("login/oauth2/token", oauth_views.canvas_style_token),
     path("api/", include("gateway.urls")),
+    path("ext/", include("gateway.urls_external")),
     # Dashboard routes are last: they own the remaining namespace.
     path("", include("registry.urls")),
 ]

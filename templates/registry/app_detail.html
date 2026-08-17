@@ -2,7 +2,7 @@
 {% block title %}{{ app.name }}{% endblock %}
 {% block content %}
 <h1>{{ app.name }} <span class="badge {{ app.status }}">{{ app.get_status_display }}</span></h1>
-<p class="lede">{{ app.tier.name }} &middot; owned by {{ app.owner.display_name }}</p>
+<p class="lede">{{ app.access_label }} &middot; owned by {{ app.owner.display_name }}</p>
 
 {% if revealed_secret %}
   <div class="panel">
@@ -24,7 +24,15 @@
     <dt>Client ID</dt><dd><code>{{ app.client_id }}</code></dd>
     <dt>Client type</dt>
     <dd>{% if app.is_public_client %}Public (PKCE required, no secret){% else %}Confidential{% if app.client_secret_hint %} &middot; secret ends <code>{{ app.client_secret_hint }}</code>{% endif %}{% endif %}</dd>
-    <dt>Access level</dt><dd>{{ app.tier.name }}<br><span class="small muted">{{ app.tier.description }}</span></dd>
+    {% if app.is_external %}
+      <dt>API base URL</dt><dd><code>{{ app.api_base_url }}</code></dd>
+      <dt>Credentials sent</dt>
+      <dd>{{ app.get_credential_style_display }}{% if app.credential_name %} &middot; <code>{{ app.credential_name }}</code>{% endif %}</dd>
+      <dt>Methods allowed</dt>
+      <dd>{% for m in app.allowed_methods %}<code>{{ m }}</code> {% empty %}<span class="muted">All</span>{% endfor %}</dd>
+    {% else %}
+      <dt>Access level</dt><dd>{{ app.tier.name }}<br><span class="small muted">{{ app.tier.description }}</span></dd>
+    {% endif %}
     <dt>Redirect URIs</dt>
     <dd>{% for uri in app.redirect_uris %}<code>{{ uri }}</code><br>{% empty %}<span class="muted">None</span>{% endfor %}</dd>
     {% if app.description %}<dt>Description</dt><dd>{{ app.description }}</dd>{% endif %}
@@ -80,12 +88,23 @@
   -d code=&lt;code&gt;</code></pre>
 
   <h3>3. Call the API</h3>
-  <pre><code>curl {{ proxy_base_url }}/api/v1/users/self/profile \
+  {% if app.is_external %}
+    <pre><code>curl {{ proxy_base_url }}/ext/some/endpoint \
   -H "Authorization: Bearer &lt;access_token&gt;"</code></pre>
-  <p class="small muted" style="margin-bottom:0">
-    Any path under <code>/api/</code> maps to the same path on {{ canvas_base_url }}.
-    Pagination <code>Link</code> headers come back pointing at this proxy.
-  </p>
+    <p class="small muted" style="margin-bottom:0">
+      Everything after <code>/ext</code> is appended to
+      <code>{{ app.api_base_url }}</code>, and your registered credentials are
+      attached here rather than in the browser. Pagination <code>Link</code>
+      headers pointing at your API come back rewritten to this proxy.
+    </p>
+  {% else %}
+    <pre><code>curl {{ proxy_base_url }}/api/v1/users/self/profile \
+  -H "Authorization: Bearer &lt;access_token&gt;"</code></pre>
+    <p class="small muted" style="margin-bottom:0">
+      Any path under <code>/api/</code> maps to the same path on {{ canvas_base_url }}.
+      Pagination <code>Link</code> headers come back pointing at this proxy.
+    </p>
+  {% endif %}
 </div>
 {% endif %}
 

@@ -1,9 +1,12 @@
+from unittest import mock
+
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from oauth.models import CanvasGrant
+from canvasclient import client
+from oauth.models import CanvasGrant, ProxyToken
 from registry.models import AccessTier, AppStatus, ProxyApp, validate_redirect_uri
 
 User = get_user_model()
@@ -177,12 +180,20 @@ class ApprovalWorkflowTests(TestCase):
             app=self.app,
             tier=self.tier,
             canvas_user_id="7",
-            access_token_encrypted="x",
         )
-        self.app.suspend(self.staff, "Abuse report")
+        grant.store_canvas_payload({"access_token": "canvas-token", "expires_in": 3600})
+        grant.save()
+        _, _, _ = ProxyToken.issue(grant)
+
+        with mock.patch.object(client, "revoke", return_value=True) as revoke:
+            self.app.suspend(self.staff, "Abuse report")
+
         grant.refresh_from_db()
         self.assertIsNotNone(grant.revoked_at)
         self.assertFalse(self.app.is_usable)
+        # The whole point of suspending is that nothing keeps working.
+        revoke.assert_called_once_with("canvas-token")
+        self.assertFalse(ProxyToken.objects.filter(revoked_at__isnull=True).exists())
 
     def test_disabling_a_tier_disables_its_apps(self):
         self.app.approve(self.staff)

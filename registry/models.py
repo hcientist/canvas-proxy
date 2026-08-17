@@ -11,6 +11,7 @@ from django.db import models
 from django.utils import timezone
 
 from canvasclient import crypto
+from gateway.netguard import normalize_api_base_url
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
@@ -111,28 +112,14 @@ class AccessTier(models.Model):
 
     def permits(self, method, path):
         """Return (allowed, reason). `path` is the upstream path, e.g. /api/v1/courses."""
-        method = method.upper()
-
-        for pattern in self.denied_patterns or []:
-            if _matches(pattern, path):
-                return False, f"{path} is not reachable through the {self.name} tier."
-
-        allowed_methods = [m.upper() for m in (self.allowed_methods or [])]
-        if allowed_methods and method not in allowed_methods:
-            return False, f"The {self.name} tier allows only {', '.join(allowed_methods)}."
-
-        rules = self.path_rules or []
-        if not rules:
-            return True, ""
-
-        for rule in rules:
-            rule_methods = [m.upper() for m in rule.get("methods") or []]
-            if rule_methods and method not in rule_methods:
-                continue
-            if _matches(rule.get("pattern", ""), path):
-                return True, ""
-
-        return False, f"{method} {path} is outside the {self.name} tier's allowlist."
+        return evaluate_rules(
+            method,
+            path,
+            allowed_methods=self.allowed_methods,
+            path_rules=self.path_rules,
+            denied_patterns=self.denied_patterns,
+            label=f"the {self.name} tier",
+        )
 
     def clean(self):
         errors = {}
@@ -154,6 +141,41 @@ class AccessTier(models.Model):
             raise ValidationError(errors)
 
 
+def evaluate_rules(method, path, allowed_methods, path_rules, denied_patterns, label):
+    """Shared method/path gate for both access tiers and external apps.
+
+    Returns (allowed, reason). Empty rule lists mean "no restriction", so an
+    unconfigured tier or app is limited only by whatever is upstream.
+    """
+    method = method.upper()
+
+    for pattern in denied_patterns or []:
+        if _matches(pattern, path):
+            return False, f"{path} is not reachable through {label}."
+
+    methods = [m.upper() for m in (allowed_methods or [])]
+    if methods and method not in methods:
+        return False, _sentence(f"{label} allows only {', '.join(methods)}.")
+
+    rules = path_rules or []
+    if not rules:
+        return True, ""
+
+    for rule in rules:
+        rule_methods = [m.upper() for m in rule.get("methods") or []]
+        if rule_methods and method not in rule_methods:
+            continue
+        if _matches(rule.get("pattern", ""), path):
+            return True, ""
+
+    return False, f"{method} {path} is outside {label}'s allowlist."
+
+
+def _sentence(text):
+    """Capitalise the first letter only, leaving names like 'Read-only' alone."""
+    return text[:1].upper() + text[1:]
+
+
 def _matches(pattern, path):
     if not pattern:
         return False
@@ -172,11 +194,38 @@ class AppStatus(models.TextChoices):
     SUSPENDED = "suspended", "Suspended"
 
 
+class AppKind(models.TextChoices):
+    CANVAS = "canvas", "Canvas API"
+    EXTERNAL = "external", "External API"
+
+
+class CredentialStyle(models.TextChoices):
+    """How the proxy presents an external app's credentials upstream."""
+
+    NONE = "none", "No credentials (public API)"
+    BEARER = "bearer", "Authorization: Bearer <secret>"
+    BASIC = "basic", "HTTP Basic (client id + secret)"
+    HEADER = "header", "Custom header"
+    QUERY = "query", "Query parameter"
+
+
 class ProxyApp(models.Model):
-    """A third-party app registered by a developer against one access tier."""
+    """A third-party app registered by a developer.
+
+    Two kinds, sharing one registration, approval and token pipeline:
+
+    * `canvas`   -- proxies to the Canvas API using one of the operator's
+      developer keys, chosen by tier. The end user grants real Canvas access.
+    * `external` -- proxies to a third-party API the developer nominates, using
+      credentials the developer supplies. Canvas is used only to establish who
+      the end user is; no Canvas token is kept.
+    """
 
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="apps"
+    )
+    kind = models.CharField(
+        max_length=20, choices=AppKind.choices, default=AppKind.CANVAS
     )
     name = models.CharField(max_length=120)
     description = models.TextField(
@@ -185,9 +234,43 @@ class ProxyApp(models.Model):
     homepage_url = models.URLField(blank=True)
 
     tier = models.ForeignKey(
-        AccessTier, on_delete=models.PROTECT, related_name="apps"
+        AccessTier,
+        on_delete=models.PROTECT,
+        related_name="apps",
+        null=True,
+        blank=True,
+        help_text="Canvas apps only.",
     )
     redirect_uris = models.JSONField(default=list)
+
+    # --- external apps only ------------------------------------------------
+
+    api_base_url = models.URLField(
+        max_length=500,
+        blank=True,
+        help_text="Base URL of the third-party API, e.g. https://api.example.com/v2",
+    )
+    credential_style = models.CharField(
+        max_length=20, choices=CredentialStyle.choices, default=CredentialStyle.NONE
+    )
+    credential_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Header or query parameter name, for those credential styles.",
+    )
+    upstream_client_id = models.CharField(max_length=255, blank=True)
+    upstream_client_secret_encrypted = models.TextField(blank=True)
+    allowed_methods = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="HTTP methods this app may use upstream. Empty means all.",
+    )
+    path_rules = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Optional allowlist: [{"methods": ["GET"], "pattern": "^/v2/items"}]. '
+        "Empty means every path under the base URL.",
+    )
 
     client_id = models.CharField(max_length=64, unique=True, editable=False)
     client_secret_hash = models.CharField(max_length=255, blank=True)
@@ -225,13 +308,65 @@ class ProxyApp(models.Model):
     def save(self, *args, **kwargs):
         if not self.client_id:
             self.client_id = uuid.uuid4().hex
+        if self.api_base_url:
+            self.api_base_url = normalize_api_base_url(self.api_base_url)
         super().save(*args, **kwargs)
 
     # -- state --------------------------------------------------------------
 
     @property
+    def is_external(self):
+        return self.kind == AppKind.EXTERNAL
+
+    @property
     def is_usable(self):
-        return self.status == AppStatus.APPROVED and self.tier.is_active
+        if self.status != AppStatus.APPROVED:
+            return False
+        if self.is_external:
+            return bool(self.api_base_url)
+        return bool(self.tier and self.tier.is_active)
+
+    @property
+    def upstream_label(self):
+        """Where this app's traffic goes, for consent screens and review."""
+        if self.is_external:
+            return urlsplit(self.api_base_url).netloc or self.api_base_url
+        return urlsplit(settings.CANVAS_BASE_URL).netloc
+
+    @property
+    def access_label(self):
+        if self.is_external:
+            return f"the {self.upstream_label} API"
+        return self.tier.name if self.tier else "an unassigned tier"
+
+    def permits(self, method, path):
+        """Return (allowed, reason) for a proxied request by this app."""
+        if self.is_external:
+            return evaluate_rules(
+                method,
+                path,
+                allowed_methods=self.allowed_methods,
+                path_rules=self.path_rules,
+                denied_patterns=[],
+                label=f"this app's registration for {self.upstream_label}",
+            )
+        if not self.tier:
+            return False, "This app has no access tier assigned."
+        return self.tier.permits(method, path)
+
+    # -- upstream credentials (external apps) -------------------------------
+
+    @property
+    def upstream_client_secret(self):
+        return crypto.decrypt(self.upstream_client_secret_encrypted)
+
+    @upstream_client_secret.setter
+    def upstream_client_secret(self, value):
+        self.upstream_client_secret_encrypted = crypto.encrypt(value or "")
+
+    @property
+    def has_upstream_credentials(self):
+        return bool(self.upstream_client_id or self.upstream_client_secret_encrypted)
 
     def submit_for_review(self):
         self.status = AppStatus.PENDING
@@ -258,7 +393,13 @@ class ProxyApp(models.Model):
         )
 
     def suspend(self, reviewer, notes=""):
-        """Stop the app immediately and cut off every grant it holds."""
+        """Stop the app immediately and cut off every grant it holds.
+
+        Each grant is revoked individually rather than bulk-updated, so the
+        tokens issued against it are revoked too and any Canvas token is handed
+        back upstream. Suspension is meant to end the app's access everywhere,
+        not just to stop this proxy honouring it.
+        """
         self.status = AppStatus.SUSPENDED
         self.reviewed_by = reviewer
         self.reviewed_at = timezone.now()
@@ -266,7 +407,8 @@ class ProxyApp(models.Model):
         self.save(
             update_fields=["status", "reviewed_by", "reviewed_at", "review_notes", "updated_at"]
         )
-        self.grants.filter(revoked_at__isnull=True).update(revoked_at=timezone.now())
+        for grant in self.grants.filter(revoked_at__isnull=True).select_related("tier"):
+            grant.revoke(at_canvas=True)
 
     # -- credentials --------------------------------------------------------
 

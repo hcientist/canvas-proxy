@@ -5,6 +5,7 @@ using the Canvas token stored for the caller's grant. The app's own bearer
 token never reaches Canvas and the Canvas token never reaches the app.
 """
 
+import base64
 import logging
 import re
 import time
@@ -17,8 +18,10 @@ from django.views.decorators.csrf import csrf_exempt
 
 from canvasclient import client
 from oauth.models import ProxyToken
+from registry.models import CredentialStyle
 
 from .models import RequestLog
+from .netguard import check_upstream_url
 from .ratelimit import check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -62,8 +65,18 @@ LINK_URL_RE = re.compile(r"<([^>]+)>")
 
 @csrf_exempt
 def proxy(request, upstream_path=""):
+    """Forward to the Canvas API. Canvas-kind apps only."""
+    return _proxy(request, "/api/" + upstream_path.lstrip("/"), external=False)
+
+
+@csrf_exempt
+def external_proxy(request, upstream_path=""):
+    """Forward to an external app's registered API."""
+    return _proxy(request, "/" + upstream_path.lstrip("/"), external=True)
+
+
+def _proxy(request, path, external):
     started = time.monotonic()
-    path = "/api/" + upstream_path.lstrip("/")
 
     token_value = _bearer_token(request)
     if not token_value:
@@ -120,7 +133,21 @@ def proxy(request, upstream_path=""):
             description=f"This app is {app.get_status_display().lower()}.",
         )
 
-    allowed, reason = app.tier.permits(request.method, path)
+    # The two prefixes are not interchangeable: a Canvas token must not be
+    # spendable against an arbitrary third-party host, and vice versa.
+    if app.is_external != external:
+        wanted = "/ext/" if app.is_external else "/api/"
+        return _deny(
+            request,
+            path,
+            proxy_token,
+            "Wrong proxy prefix for this app kind",
+            status=404,
+            error="not_found",
+            description=f"This app proxies through {wanted}, not this prefix.",
+        )
+
+    allowed, reason = app.permits(request.method, path)
     if not allowed:
         return _deny(
             request,
@@ -132,7 +159,7 @@ def proxy(request, upstream_path=""):
             description=reason,
         )
 
-    blocked = _blocked_params(request, app.tier)
+    blocked = _blocked_params(request, app)
     if blocked:
         reason = f"Query parameter '{blocked}' is not permitted."
         return _deny(
@@ -170,28 +197,57 @@ def proxy(request, upstream_path=""):
             error="payload_too_large",
         )
 
-    try:
-        canvas_token = grant.usable_access_token()
-    except client.CanvasError as exc:
-        logger.warning("Could not refresh Canvas token for grant %s: %s", grant.id, exc)
-        return _deny(
-            request,
-            path,
-            proxy_token,
-            "Canvas token refresh failed",
-            status=502,
-            error="upstream_error",
-            description=f"Could not renew the Canvas token: {exc}",
-        )
+    if external:
+        upstream_url = f"{app.api_base_url}{path}"
+        # Re-checked here, not just at registration: the address behind a
+        # hostname can change after a reviewer has approved it.
+        safe, reason = check_upstream_url(upstream_url)
+        if not safe:
+            logger.warning(
+                "Refusing upstream %s for app %s: %s",
+                app.api_base_url,
+                app.client_id,
+                reason,
+            )
+            return _deny(
+                request,
+                path,
+                proxy_token,
+                "Unsafe upstream host",
+                status=502,
+                error="upstream_error",
+                description=reason,
+            )
+        headers = _forwardable_headers(request, None)
+        params = _forwardable_query(request)
+        _apply_upstream_credentials(app, headers, params)
+    else:
+        try:
+            canvas_token = grant.usable_access_token()
+        except client.CanvasError as exc:
+            logger.warning(
+                "Could not refresh Canvas token for grant %s: %s", grant.id, exc
+            )
+            return _deny(
+                request,
+                path,
+                proxy_token,
+                "Canvas token refresh failed",
+                status=502,
+                error="upstream_error",
+                description=f"Could not renew the Canvas token: {exc}",
+            )
+        upstream_url = f"{client.base_url()}{path}"
+        headers = _forwardable_headers(request, canvas_token)
+        params = _forwardable_query(request)
 
-    upstream_url = f"{client.base_url()}{path}"
     try:
         upstream = requests.request(
             method=request.method,
             url=upstream_url,
-            params=_forwardable_query(request),
+            params=params,
             data=request.body if request.body else None,
-            headers=_forwardable_headers(request, canvas_token),
+            headers=headers,
             timeout=(settings.CANVAS_CONNECT_TIMEOUT, settings.CANVAS_TIMEOUT),
             allow_redirects=False,
             stream=True,
@@ -215,7 +271,11 @@ def proxy(request, upstream_path=""):
             "Upstream error",
             status=502,
             error="upstream_error",
-            description="Could not reach Canvas.",
+            description=(
+                f"Could not reach {app.upstream_label}."
+                if external
+                else "Could not reach Canvas."
+            ),
         )
 
     duration_ms = int((time.monotonic() - started) * 1000)
@@ -228,10 +288,10 @@ def proxy(request, upstream_path=""):
         duration_ms=duration_ms,
     )
 
-    return _relay(upstream)
+    return _relay(upstream, app if external else None)
 
 
-def _relay(upstream):
+def _relay(upstream, external_app=None):
     response = StreamingHttpResponse(
         upstream.iter_content(chunk_size=64 * 1024),
         status=upstream.status_code,
@@ -242,9 +302,9 @@ def _relay(upstream):
         if lowered in STRIPPED_RESPONSE_HEADERS or lowered == "content-type":
             continue
         if lowered == "link":
-            value = _rewrite_link_header(value)
+            value = _rewrite_link_header(value, external_app)
         elif lowered == "location":
-            value = _rewrite_url(value)
+            value = _rewrite_url(value, external_app)
         response[name] = value
     return response
 
@@ -256,14 +316,48 @@ def _bearer_token(request):
     return ""
 
 
-def _blocked_params(request, tier):
+def _blocked_params(request, app):
+    """Query parameters the caller may not set.
+
+    For an external app that authenticates by query parameter, the caller must
+    not be able to supply that parameter itself -- it would either override the
+    stored credential or, with a repeated key, let the caller see which value
+    the upstream accepted.
+    """
+    credential_param = ""
+    if app.is_external and app.credential_style == CredentialStyle.QUERY:
+        credential_param = (app.credential_name or "").lower()
+
     for name in request.GET:
         lowered = name.lower()
-        if lowered == "as_user_id" and tier.allow_masquerade:
+        if credential_param and lowered == credential_param:
+            return name
+        if app.is_external:
+            # as_user_id is a Canvas concept; upstream APIs get the raw query.
+            if lowered == "access_token":
+                return name
+            continue
+        if lowered == "as_user_id" and app.tier and app.tier.allow_masquerade:
             continue
         if lowered in BLOCKED_QUERY_PARAMS:
             return name
     return ""
+
+
+def _apply_upstream_credentials(app, headers, params):
+    """Attach the app's registered credentials for its third-party API."""
+    style = app.credential_style
+    secret = app.upstream_client_secret
+
+    if style == CredentialStyle.BEARER:
+        headers["Authorization"] = f"Bearer {secret}"
+    elif style == CredentialStyle.BASIC:
+        raw = f"{app.upstream_client_id}:{secret}".encode()
+        headers["Authorization"] = f"Basic {base64.b64encode(raw).decode()}"
+    elif style == CredentialStyle.HEADER and app.credential_name:
+        headers[app.credential_name] = secret
+    elif style == CredentialStyle.QUERY and app.credential_name:
+        params.append((app.credential_name, secret))
 
 
 def _forwardable_query(request):
@@ -282,7 +376,14 @@ def _forwardable_query(request):
 
 
 def _forwardable_headers(request, canvas_token):
-    headers = {"Authorization": f"Bearer {canvas_token}"}
+    """Copy the caller's headers, minus anything hop-by-hop or privileged.
+
+    `canvas_token` is None for external apps; their credentials are attached
+    afterwards by `_apply_upstream_credentials`.
+    """
+    headers = {}
+    if canvas_token:
+        headers["Authorization"] = f"Bearer {canvas_token}"
     for key, value in request.META.items():
         if not key.startswith("HTTP_"):
             continue
@@ -292,23 +393,31 @@ def _forwardable_headers(request, canvas_token):
         headers[name] = value
     if request.META.get("CONTENT_TYPE"):
         headers["content-type"] = request.META["CONTENT_TYPE"]
-    # Let Canvas's own logs show that traffic arrived through this proxy.
+    # Let the upstream's own logs show that traffic arrived through this proxy.
     headers["user-agent"] = request.META.get("HTTP_USER_AGENT", "canvas-proxy")
     headers["x-canvas-proxy"] = "1"
     return headers
 
 
-def _rewrite_link_header(value):
-    """Point RFC 5988 pagination links back at the proxy, not Canvas."""
-    return LINK_URL_RE.sub(lambda m: f"<{_rewrite_url(m.group(1))}>", value)
+def _rewrite_link_header(value, external_app=None):
+    """Point RFC 5988 pagination links back at the proxy, not the upstream."""
+    return LINK_URL_RE.sub(
+        lambda m: f"<{_rewrite_url(m.group(1), external_app)}>", value
+    )
 
 
-def _rewrite_url(url):
-    """Swap the Canvas origin for the proxy origin on API URLs only.
+def _rewrite_url(url, external_app=None):
+    """Swap the upstream origin for the proxy origin on API URLs only.
 
     File downloads redirect to presigned storage hosts; those must pass through
     untouched or the signature breaks.
     """
+    if external_app is not None:
+        base = external_app.api_base_url
+        if base and url.startswith(base):
+            return f"{settings.PROXY_BASE_URL}/ext{url[len(base):]}"
+        return url
+
     canvas = client.base_url()
     if url.startswith(canvas + "/api/"):
         return settings.PROXY_BASE_URL + url[len(canvas) :]

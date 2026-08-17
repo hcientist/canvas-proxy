@@ -13,7 +13,9 @@ import requests
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from accounts.views import dashboard_redirect_uri
 from canvasclient import client
+from oauth.views import canvas_redirect_uri
 from registry.models import AccessTier
 
 
@@ -26,31 +28,47 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        redirect_uri = f"{settings.PROXY_BASE_URL}/oauth2/canvas/callback"
-        self.stdout.write(f"Canvas:       {settings.CANVAS_BASE_URL}")
-        self.stdout.write(f"redirect_uri: {redirect_uri}")
+        # Two different flows, two different callbacks. Every key needs the
+        # authorization one; the login tier's key also serves dashboard sign-in
+        # and external-app identity checks, so it needs both.
+        authorize_uri = canvas_redirect_uri()
+        signin_uri = dashboard_redirect_uri()
+
+        self.stdout.write(f"Canvas: {settings.CANVAS_BASE_URL}")
+        self.stdout.write(f"App authorization callback: {authorize_uri}")
+        self.stdout.write(f"Dashboard sign-in callback: {signin_uri}")
         self.stdout.write("")
 
         tiers = AccessTier.objects.filter(is_active=True)
         if options["tier"]:
             tiers = tiers.filter(slug=options["tier"])
 
+        missing = set()
         problems = 0
         for tier in tiers:
-            ok, message = self._check(tier, redirect_uri)
-            style = self.style.SUCCESS if ok else self.style.ERROR
-            self.stdout.write(f"{tier.slug:12} {style(message)}")
-            problems += 0 if ok else 1
+            is_login_tier = tier.slug == settings.CANVAS_LOGIN_TIER
+            wanted = [("app authorization", authorize_uri)]
+            if is_login_tier:
+                wanted.append(("dashboard sign-in", signin_uri))
+
+            for label, uri in wanted:
+                ok, message = self._check(tier, uri)
+                style = self.style.SUCCESS if ok else self.style.ERROR
+                self.stdout.write(f"{tier.slug:12} {label:20} {style(message)}")
+                if not ok:
+                    problems += 1
+                    if "not registered" in message:
+                        missing.add(uri)
 
         self.stdout.write("")
         if problems:
-            self.stdout.write(
-                self.style.WARNING(
-                    f"{problems} tier(s) not ready. In Canvas, open each developer "
-                    "key and add this exact line to its Redirect URIs:\n"
-                    f"  {redirect_uri}"
-                )
+            note = (
+                f"{problems} check(s) failed. In Canvas, open the developer key "
+                "and add the missing line to its Redirect URIs box:"
             )
+            self.stdout.write(self.style.WARNING(note))
+            for uri in sorted(missing) or [authorize_uri]:
+                self.stdout.write(f"  {uri}")
             return
 
         self.stdout.write(self.style.SUCCESS("All configured tiers are ready."))

@@ -8,13 +8,13 @@
   {% if apps %}
     <table>
       <thead>
-        <tr><th>Name</th><th>Access level</th><th>Status</th><th>Active grants</th><th></th></tr>
+        <tr><th>Name</th><th>Goes to</th><th>Status</th><th>Active grants</th><th></th></tr>
       </thead>
       <tbody>
         {% for app in apps %}
           <tr>
             <td><a href="{% url 'registry:app_detail' app.pk %}">{{ app.name }}</a></td>
-            <td>{{ app.tier.name }}</td>
+            <td>{{ app.access_label }}</td>
             <td><span class="badge {{ app.status }}">{{ app.get_status_display }}</span></td>
             <td>{{ app.active_grants }}</td>
             <td><a class="small" href="{% url 'registry:app_detail' app.pk %}">Details</a></td>
@@ -27,5 +27,5 @@
   {% endif %}
 </div>
 
-<a class="btn" href="{% url 'registry:app_create' %}">Register an app</a>
+<a class="btn" href="{% url 'registry:app_choose_kind' %}">Register an app</a>
 {% endblock %}

@@ -53,19 +53,49 @@ class AccessTierAdmin(admin.ModelAdmin):
         return obj.apps.count()
 
 
+class ProxyAppForm(forms.ModelForm):
+    upstream_client_secret_input = forms.CharField(
+        label="Upstream API secret",
+        required=False,
+        widget=forms.PasswordInput(render_value=False),
+        help_text="External apps only. Leave blank to keep the stored secret.",
+    )
+
+    class Meta:
+        model = ProxyApp
+        exclude = ("upstream_client_secret_encrypted",)
+
+    def save(self, commit=True):
+        app = super().save(commit=False)
+        secret = self.cleaned_data.get("upstream_client_secret_input")
+        if secret:
+            app.upstream_client_secret = secret
+        if commit:
+            app.save()
+        return app
+
+
 @admin.register(ProxyApp)
 class ProxyAppAdmin(admin.ModelAdmin):
+    form = ProxyAppForm
     list_display = (
         "name",
         "owner",
-        "tier",
+        "kind",
+        "upstream",
         "status",
         "is_public_client",
         "submitted_at",
         "reviewed_by",
     )
-    list_filter = ("status", "tier", "is_public_client")
-    search_fields = ("name", "client_id", "owner__username", "owner__canvas_name")
+    list_filter = ("kind", "status", "tier", "is_public_client", "credential_style")
+    search_fields = (
+        "name",
+        "client_id",
+        "api_base_url",
+        "owner__username",
+        "owner__canvas_name",
+    )
     readonly_fields = (
         "client_id",
         "client_secret_hash",
@@ -75,6 +105,10 @@ class ProxyAppAdmin(admin.ModelAdmin):
         "updated_at",
     )
     autocomplete_fields = ("owner",)
+
+    @admin.display(description="Upstream")
+    def upstream(self, obj):
+        return obj.api_base_url if obj.is_external else (obj.tier.name if obj.tier else "—")
     actions = ("approve_selected", "reject_selected", "suspend_selected")
 
     @admin.action(description="Approve selected apps")

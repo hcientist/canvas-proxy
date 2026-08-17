@@ -12,13 +12,22 @@ from django.views.decorators.http import require_http_methods
 from gateway.models import RequestLog
 from oauth.models import CanvasGrant
 
-from .forms import ProxyAppForm, ReviewForm
-from .models import AccessTier, AppStatus, ProxyApp
+from .forms import ExternalAppForm, ProxyAppForm, ReviewForm
+from .models import AccessTier, AppKind, AppStatus, ProxyApp
 
 staff_required = user_passes_test(lambda u: u.is_authenticated and u.is_staff)
 
 # Editing any of these invalidates the basis on which the app was approved.
-REVIEW_TRIGGERING_FIELDS = {"redirect_uris", "tier", "is_public_client"}
+# For external apps that includes where the traffic goes and what is sent with
+# it -- a reviewer approved one upstream, not whichever one is set later.
+REVIEW_TRIGGERING_FIELDS = {
+    "redirect_uris",
+    "tier",
+    "is_public_client",
+    "api_base_url",
+    "allowed_methods",
+    "credential_style",
+}
 
 
 def home(request):
@@ -62,13 +71,34 @@ def app_list(request):
     return render(request, "registry/app_list.html", {"apps": apps})
 
 
+def _form_class(kind):
+    return ExternalAppForm if kind == AppKind.EXTERNAL else ProxyAppForm
+
+
 @login_required
-def app_create(request):
+def app_choose_kind(request):
+    """Which upstream is this app for? The two need different details."""
+    return render(
+        request,
+        "registry/app_choose_kind.html",
+        {"tiers": AccessTier.objects.filter(is_active=True)},
+    )
+
+
+@login_required
+def app_create(request, kind=AppKind.CANVAS):
+    if kind not in {AppKind.CANVAS, AppKind.EXTERNAL}:
+        return redirect("registry:app_choose_kind")
+
+    form_class = _form_class(kind)
     if request.method == "POST":
-        form = ProxyAppForm(request.POST)
+        form = form_class(request.POST)
         if form.is_valid():
+            # Both forms populate every field they own on commit=False, so the
+            # instance is complete apart from who owns it.
             app = form.save(commit=False)
             app.owner = request.user
+            app.kind = kind
             app.status = AppStatus.DRAFT
             app.save()
             if not app.is_public_client:
@@ -79,8 +109,12 @@ def app_create(request):
             )
             return redirect("registry:app_detail", pk=app.pk)
     else:
-        form = ProxyAppForm()
-    return render(request, "registry/app_form.html", {"form": form, "app": None})
+        form = form_class()
+    return render(
+        request,
+        "registry/app_form.html",
+        {"form": form, "app": None, "kind": kind},
+    )
 
 
 @login_required
@@ -115,8 +149,9 @@ def app_detail(request, pk):
 @login_required
 def app_edit(request, pk):
     app = get_object_or_404(ProxyApp, pk=pk, owner=request.user)
+    form_class = _form_class(app.kind)
     if request.method == "POST":
-        form = ProxyAppForm(request.POST, instance=app)
+        form = form_class(request.POST, instance=app)
         if form.is_valid():
             sensitive_change = REVIEW_TRIGGERING_FIELDS & set(form.changed_data)
             app = form.save()
@@ -143,8 +178,12 @@ def app_edit(request, pk):
                 messages.success(request, "App updated.")
             return redirect("registry:app_detail", pk=app.pk)
     else:
-        form = ProxyAppForm(instance=app)
-    return render(request, "registry/app_form.html", {"form": form, "app": app})
+        form = form_class(instance=app)
+    return render(
+        request,
+        "registry/app_form.html",
+        {"form": form, "app": app, "kind": app.kind},
+    )
 
 
 @login_required

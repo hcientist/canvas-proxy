@@ -12,6 +12,10 @@ API calls upstream.
 
 The app never sees a Canvas token. Revoking its approval cuts it off at once.
 
+An app can also front a **third-party API** instead of Canvas, with the same
+registration and review, using credentials the developer supplies and Canvas
+only to establish who the user is — see [External APIs](#external-non-canvas-apis).
+
 ---
 
 ## How the pieces fit
@@ -224,6 +228,59 @@ route around the REST path rules entirely.
 
 ---
 
+## External (non-Canvas) APIs
+
+A registered app can instead front a third-party API. The developer supplies the
+API's base URL and, if it needs them, credentials; the proxy stores those
+encrypted and attaches them to each request. Their frontend never ships an API
+key to the browser.
+
+Canvas still guards the front door. Users sign in through Canvas exactly as they
+would for a Canvas app, so only people at your institution can use it — but the
+proxy asks Canvas for identity only, revokes that token the moment it has a name
+and user id, and stores no Canvas token at all.
+
+Register one at **Register an app → A different API**:
+
+| Field | Meaning |
+|---|---|
+| API base URL | Must be https and resolve to a public address |
+| HTTP methods | Only what the app needs; write access is granted here |
+| Credential style | none, Bearer, HTTP Basic, custom header, or query parameter |
+| Client id / secret | Optional, depending on the style. Secret is stored encrypted |
+| Redirect URIs | Exactly as for a Canvas app |
+
+Once approved, the flow is identical to the Canvas one — the same
+`/oauth2/auth` and `/oauth2/token` endpoints — but requests go to `/ext/`:
+
+```bash
+curl https://your-proxy-host/ext/some/endpoint \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Everything after `/ext` is appended to the registered base URL, so with a base
+of `https://api.example.com/v2` that request reaches
+`https://api.example.com/v2/some/endpoint`. `Link` headers pointing at the API
+come back rewritten to the proxy.
+
+The two prefixes are not interchangeable. A token for an external app is
+rejected at `/api/`, and a Canvas token is rejected at `/ext/`, so a Canvas
+grant can never be spent against an arbitrary third-party host.
+
+### Why the base URL is restricted
+
+Without a guard this feature would be an SSRF tool with a Canvas login on the
+front: the proxy runs inside a private Docker network, so a base URL of
+`http://postgres:5432`, `http://127.0.0.1` or the cloud metadata address
+`http://169.254.169.254/` would reach things the student cannot otherwise
+touch. So the host is resolved and every address it returns must be public —
+checked when the app is registered, and **again on every request**, because the
+address behind a name can change after a reviewer has approved it. A name that
+answers with both a public and a private address is refused outright.
+
+A reviewer still has to judge the one thing the proxy cannot: whether a public
+host is one the institution wants called with these credentials.
+
 ## Using the proxy (for app developers)
 
 Sign in at `/`, register an app, wait for approval. Then:
@@ -336,10 +393,13 @@ Two things worth knowing:
 .venv/bin/python manage.py test
 ```
 
-141 tests, no network access — Canvas is mocked at the `canvasclient` boundary.
+224 tests, no network access — Canvas is mocked at the `canvasclient` boundary.
 They cover the full authorization chain, tier enforcement, header and query
 filtering, pagination rewriting, code/refresh replay handling, PKCE, the
-approval workflow, and ownership boundaries on the dashboard.
+approval workflow, and ownership boundaries on the dashboard. For external
+apps they also cover the SSRF guard (private, loopback, link-local and
+mixed-answer DNS), each credential style, and the separation between the
+`/api/` and `/ext/` prefixes.
 
 There are also two end-to-end checks that run a stand-in Canvas and drive the
 whole chain over HTTP against a throwaway database — one against a plain Django
@@ -362,9 +422,9 @@ token.
 ```
 config/        settings, root URLs
 accounts/      custom user, Canvas sign-in for the dashboard
-registry/      access tiers, app registration, staff review, seed commands
+registry/      access tiers, app registration (Canvas and external), review
 oauth/         authorize / callback / token / revoke, grant + token storage
-gateway/       the proxy view, tier enforcement, rate limiting, audit log
+gateway/       the proxy views, policy enforcement, SSRF guard, rate limit, audit
 canvasclient/  Canvas OAuth + REST wrapper, encryption helpers
 templates/     dashboard, consent screen
 tools/e2e/     fake Canvas + live-server integration checks

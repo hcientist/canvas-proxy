@@ -24,13 +24,16 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from canvasclient import client, crypto
-from registry.models import AppStatus, ProxyApp
+from registry.models import AccessTier, AppStatus, ProxyApp
 
 from .models import AuthorizationCode, AuthorizationRequest, CanvasGrant, ProxyToken
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_CHALLENGE_METHODS = {"S256", "plain"}
+
+# All an external app's sign-in needs is the user's identity.
+IDENTITY_SCOPES = ["url:GET|/api/v1/users/:user_id/profile"]
 
 
 # --- helpers ----------------------------------------------------------------
@@ -39,6 +42,20 @@ SUPPORTED_CHALLENGE_METHODS = {"S256", "plain"}
 def canvas_redirect_uri():
     """The single redirect URI every Canvas developer key must be given."""
     return f"{settings.PROXY_BASE_URL}/oauth2/canvas/callback"
+
+
+def _signing_tier(app):
+    """The tier whose Canvas developer key drives this app's sign-in step.
+
+    A Canvas app uses its own tier's key, since the resulting token is the one
+    it will actually use. An external app has no tier, so it borrows the
+    dashboard sign-in key: it needs identity, not API access.
+    """
+    if not app.is_external:
+        return app.tier
+    return AccessTier.objects.filter(
+        slug=settings.CANVAS_LOGIN_TIER, is_active=True
+    ).first()
 
 
 def _error_page(request, message, status=400, detail=""):
@@ -116,15 +133,37 @@ def authorize(request):
             f"This app is {app.get_status_display().lower()} and cannot request access.",
             state,
         )
-    if not app.tier.is_active:
-        return _redirect_with_error(
-            redirect_uri, "temporarily_unavailable", "This access tier is disabled.", state
-        )
-    if not app.tier.is_configured:
+
+    # Both kinds send the user to Canvas: a Canvas app to grant real API access
+    # with its tier's key, an external app only to prove who they are.
+    signing_tier = _signing_tier(app)
+    if not signing_tier or not signing_tier.is_configured:
         return _redirect_with_error(
             redirect_uri,
             "temporarily_unavailable",
-            "This access tier has no Canvas developer key configured.",
+            "Canvas sign-in is not configured on this proxy.",
+            state,
+        )
+    if not app.is_external:
+        if not app.tier.is_active:
+            return _redirect_with_error(
+                redirect_uri,
+                "temporarily_unavailable",
+                "This access tier is disabled.",
+                state,
+            )
+        if not app.tier.is_configured:
+            return _redirect_with_error(
+                redirect_uri,
+                "temporarily_unavailable",
+                "This access tier has no Canvas developer key configured.",
+                state,
+            )
+    elif not app.api_base_url:
+        return _redirect_with_error(
+            redirect_uri,
+            "temporarily_unavailable",
+            "This app has no API base URL registered.",
             state,
         )
     if response_type != "code":
@@ -204,13 +243,24 @@ def authorize_confirm(request, request_id):
             auth_request.client_state,
         )
 
-    tier = app.tier
+    tier = _signing_tier(app)
+    if not tier or not tier.is_configured:
+        return _redirect_with_error(
+            auth_request.redirect_uri,
+            "temporarily_unavailable",
+            "Canvas sign-in is not configured on this proxy.",
+            auth_request.client_state,
+        )
+
+    # An external app only needs to learn who the user is, so it asks for the
+    # narrowest scopes rather than the tier's full set.
+    scopes = IDENTITY_SCOPES if app.is_external else tier.scopes
     return redirect(
         client.authorize_url(
             client_id=tier.canvas_client_id,
             redirect_uri=canvas_redirect_uri(),
             state=auth_request.proxy_state,
-            scopes=tier.scopes if tier.enforces_scopes else (),
+            scopes=scopes if tier.enforces_scopes else (),
         )
     )
 
@@ -260,7 +310,16 @@ def canvas_callback(request):
         )
 
     app = auth_request.app
-    tier = app.tier
+    tier = _signing_tier(app)
+    if not tier or not tier.is_configured:
+        _consume(auth_request)
+        return _redirect_with_error(
+            auth_request.redirect_uri,
+            "temporarily_unavailable",
+            "Canvas sign-in is not configured on this proxy.",
+            auth_request.client_state,
+        )
+
     try:
         payload = client.exchange_code(
             client_id=tier.canvas_client_id,
@@ -282,13 +341,18 @@ def canvas_callback(request):
     with transaction.atomic():
         grant = CanvasGrant(
             app=app,
-            tier=tier,
+            tier=None if app.is_external else tier,
             canvas_user_id=str(canvas_user.get("id") or ""),
             canvas_user_name=str(canvas_user.get("name") or "")[:255],
             canvas_global_id=str(canvas_user.get("global_id") or ""),
-            scopes=list(tier.scopes or []),
+            scopes=[] if app.is_external else list(tier.scopes or []),
         )
-        grant.store_canvas_payload(payload)
+        if app.is_external:
+            # Identity was the only thing needed. Hand the token straight back
+            # so the proxy never holds Canvas access it has no use for.
+            client.revoke(payload["access_token"])
+        else:
+            grant.store_canvas_payload(payload)
         grant.save()
 
         raw_code = AuthorizationCode.issue(
@@ -361,7 +425,12 @@ def _authenticate_client(request):
             f"This app is {app.get_status_display().lower()}.",
             status=403,
         )
-    if not app.tier.is_active:
+    if app.is_external:
+        if not app.api_base_url:
+            return None, _json_error(
+                "invalid_client", "This app has no API base URL registered.", status=403
+            )
+    elif not (app.tier and app.tier.is_active):
         return None, _json_error(
             "invalid_client", "This access tier is disabled.", status=403
         )
