@@ -30,7 +30,7 @@ PROFILE = {
 
 
 @override_settings(
-    CANVAS_BASE_URL=CANVAS, PROXY_BASE_URL=PROXY, CANVAS_LOGIN_TIER="read_basic"
+    CANVAS_BASE_URL=CANVAS, PROXY_BASE_URL=PROXY, CANVAS_LOGIN_TIER="auth_only"
 )
 class CanvasSignInTests(TestCase):
     def setUp(self):
@@ -160,12 +160,12 @@ class SeedTiersCommandTests(TestCase):
         self.assertEqual(AccessTier.objects.count(), 3)
         self.assertEqual(
             set(AccessTier.objects.values_list("slug", flat=True)),
-            {"read_basic", "read_write", "full"},
+            {"auth_only", "read_only", "read_write"},
         )
 
     def test_rerunning_does_not_clobber_operator_edits(self):
         call_command("seed_tiers", verbosity=0)
-        tier = AccessTier.objects.get(slug="read_basic")
+        tier = AccessTier.objects.get(slug="auth_only")
         tier.path_rules = [{"methods": ["GET"], "pattern": "^/api/v1/mine"}]
         tier.save()
 
@@ -175,7 +175,7 @@ class SeedTiersCommandTests(TestCase):
 
     def test_reset_rules_restores_the_defaults(self):
         call_command("seed_tiers", verbosity=0)
-        tier = AccessTier.objects.get(slug="read_basic")
+        tier = AccessTier.objects.get(slug="auth_only")
         tier.path_rules = []
         tier.save()
 
@@ -185,21 +185,21 @@ class SeedTiersCommandTests(TestCase):
 
     def test_seeded_tiers_enforce_their_intent(self):
         call_command("seed_tiers", verbosity=0)
-        read = AccessTier.objects.get(slug="read_basic")
+        auth = AccessTier.objects.get(slug="auth_only")
+        read = AccessTier.objects.get(slug="read_only")
         write = AccessTier.objects.get(slug="read_write")
-        full = AccessTier.objects.get(slug="full")
+
+        self.assertTrue(auth.permits("GET", "/api/v1/users/self/profile")[0])
+        self.assertFalse(auth.permits("GET", "/api/v1/courses/1")[0])
+        self.assertFalse(auth.permits("GET", "/api/graphql")[0])
 
         self.assertTrue(read.permits("GET", "/api/v1/courses/1")[0])
         self.assertFalse(read.permits("POST", "/api/v1/courses/1")[0])
         self.assertFalse(read.permits("GET", "/api/graphql")[0])
 
         self.assertTrue(write.permits("POST", "/api/v1/courses/1/assignments")[0])
-        self.assertFalse(write.permits("GET", "/api/v1/accounts/1/users")[0])
-        self.assertFalse(write.permits("POST", "/api/graphql")[0])
-
-        self.assertTrue(full.permits("DELETE", "/api/v1/accounts/1/users/2")[0])
-        self.assertTrue(full.allow_masquerade)
-        self.assertFalse(read.allow_masquerade)
+        self.assertFalse(write.permits("GET", "/api/graphql")[0])
+        self.assertFalse(write.allow_masquerade)
 
 
 class PruneCommandTests(TestCase):

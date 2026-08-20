@@ -35,7 +35,7 @@ User = get_user_model()
 staff = User.objects.create_user(username="reviewer", password="pw", is_staff=True)
 dev = User.objects.create_user(username="dev", canvas_user_id="7", canvas_name="Dev Person")
 
-tier = AccessTier.objects.get(slug="read_basic")
+tier = AccessTier.objects.get(slug="auth_only")
 tier.canvas_client_id = "10000000000001"
 tier.canvas_client_secret = "canvas-key-secret"
 tier.save()

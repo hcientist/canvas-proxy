@@ -23,12 +23,12 @@ CANVAS_TOKEN_PAYLOAD = {
 
 
 @override_settings(
-    CANVAS_BASE_URL=CANVAS, PROXY_BASE_URL=PROXY, CANVAS_LOGIN_TIER="read_basic"
+    CANVAS_BASE_URL=CANVAS, PROXY_BASE_URL=PROXY, CANVAS_LOGIN_TIER="auth_only"
 )
 class ExternalAuthorizationTests(TestCase):
     def setUp(self):
         # External apps have no tier of their own; they borrow the sign-in key.
-        self.login_tier = make_tier(slug="read_basic")
+        self.login_tier = make_tier(slug="auth_only")
         self.owner = make_user("student")
         self.app = make_external_app(owner=self.owner)
         self.secret = self.app.rotate_secret()

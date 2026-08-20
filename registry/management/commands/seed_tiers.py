@@ -2,9 +2,9 @@
 
 Credentials are read from the environment so secrets never sit in the repo:
 
-    CANVAS_KEY_READ_BASIC_ID / CANVAS_KEY_READ_BASIC_SECRET
+    CANVAS_KEY_AUTH_ONLY_ID  / CANVAS_KEY_AUTH_ONLY_SECRET
+    CANVAS_KEY_READ_ONLY_ID  / CANVAS_KEY_READ_ONLY_SECRET
     CANVAS_KEY_READ_WRITE_ID / CANVAS_KEY_READ_WRITE_SECRET
-    CANVAS_KEY_FULL_ID      / CANVAS_KEY_FULL_SECRET
 
 Re-running is safe: path rules and scopes are only written when the tier is
 first created, so local edits survive. Pass --reset-rules to overwrite them.
@@ -22,21 +22,42 @@ WRITE_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
 # "/api/v1/courses/123/assignments".
 TIERS = [
     {
-        "slug": "read_basic",
-        "name": "Read-only",
+        "slug": "auth_only",
+        "name": "Auth only",
         "sort_order": 10,
         "description": (
-            "Read access to the signed-in user's own profile, courses, "
-            "enrolments and coursework. No writes of any kind."
+            "Identity only: the signed-in user's profile. "
+            "No course data, no writes."
         ),
         "allowed_methods": ["GET", "HEAD"],
         "path_rules": [
             {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/users/self(/|$)"},
+        ],
+        "denied_patterns": [
+            r"^/api/graphql",
+            r"^/api/v1/accounts(/|$)",
+            r"^/api/v1/courses(/|$)",
+        ],
+        "scopes": [
+            "url:GET|/api/v1/users/:user_id/profile",
+        ],
+        "allow_masquerade": False,
+    },
+    {
+        "slug": "read_only",
+        "name": "Read-only",
+        "sort_order": 20,
+        "description": (
+            "Read access to the signed-in user's profile, courses, "
+            "enrolments, sections and avatars. No writes of any kind."
+        ),
+        "allowed_methods": ["GET", "HEAD"],
+        "path_rules": [
+            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/users/self(/|$)"},
+            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/users/\d+/profile(/|$)"},
+            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/users/\d+/enrollments(/|$)"},
+            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/users/\d+/avatars(/|$)"},
             {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/courses(/|$)"},
-            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/calendar_events(/|$)"},
-            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/announcements(/|$)"},
-            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/planner(/|$)"},
-            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/enrollment_terms(/|$)"},
         ],
         "denied_patterns": [
             r"^/api/graphql",
@@ -44,73 +65,56 @@ TIERS = [
             r"^/api/v1/users/\d+/logins",
         ],
         "scopes": [
-            "url:GET|/api/v1/users/:user_id/profile",
-            "url:GET|/api/v1/users/:user_id/courses",
             "url:GET|/api/v1/courses",
             "url:GET|/api/v1/courses/:id",
-            "url:GET|/api/v1/courses/:course_id/assignments",
-            "url:GET|/api/v1/courses/:course_id/assignments/:id",
-            "url:GET|/api/v1/courses/:course_id/enrollments",
-            "url:GET|/api/v1/courses/:course_id/modules",
-            "url:GET|/api/v1/courses/:course_id/pages",
+            "url:GET|/api/v1/users/:user_id/enrollments",
+            "url:GET|/api/v1/courses/:course_id/sections",
+            "url:GET|/api/v1/users/:user_id/avatars",
+            "url:GET|/api/v1/users/:user_id/profile",
         ],
         "allow_masquerade": False,
     },
     {
         "slug": "read_write",
-        "name": "Read/write (course scope)",
-        "sort_order": 20,
+        "name": "Read/write",
+        "sort_order": 30,
         "description": (
-            "Full read and write access to courses the user can already reach: "
-            "assignments, submissions, grades, pages, files and groups. "
-            "Account-level endpoints and GraphQL stay closed."
+            "Read and write access to courses, assignments, and enrolments. "
+            "Includes account-level course creation."
         ),
         "allowed_methods": WRITE_METHODS,
         "path_rules": [
             {"methods": WRITE_METHODS, "pattern": r"^/api/v1/courses(/|$)"},
-            {"methods": WRITE_METHODS, "pattern": r"^/api/v1/groups(/|$)"},
-            {"methods": WRITE_METHODS, "pattern": r"^/api/v1/files(/|$)"},
-            {"methods": WRITE_METHODS, "pattern": r"^/api/v1/folders(/|$)"},
-            {"methods": WRITE_METHODS, "pattern": r"^/api/v1/calendar_events(/|$)"},
-            {"methods": WRITE_METHODS, "pattern": r"^/api/v1/conversations(/|$)"},
             {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/users/self(/|$)"},
-            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/enrollment_terms(/|$)"},
+            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/users/\d+/profile(/|$)"},
+            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/users/\d+/enrollments(/|$)"},
+            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/sections/\d+/enrollments(/|$)"},
+            {"methods": ["GET", "HEAD"], "pattern": r"^/api/v1/accounts/\d+/enrollments(/|$)"},
+            {"methods": WRITE_METHODS, "pattern": r"^/api/v1/accounts/\d+/courses(/|$)"},
         ],
         "denied_patterns": [
             r"^/api/graphql",
-            r"^/api/v1/accounts(/|$)",
             r"^/api/v1/users/\d+/logins",
             r"^/api/v1/.*/sis_imports",
         ],
         "scopes": [
             "url:GET|/api/v1/users/:user_id/profile",
+            "url:GET|/api/v1/courses/:course_id/enrollments",
+            "url:GET|/api/v1/sections/:section_id/enrollments",
+            "url:GET|/api/v1/users/:user_id/enrollments",
             "url:GET|/api/v1/courses",
-            "url:GET|/api/v1/courses/:id",
-            "url:GET|/api/v1/courses/:course_id/assignments",
+            "url:GET|/api/v1/accounts/:account_id/enrollments/:id",
             "url:POST|/api/v1/courses/:course_id/assignments",
             "url:PUT|/api/v1/courses/:course_id/assignments/:id",
-            "url:GET|/api/v1/courses/:course_id/assignments/:assignment_id/submissions",
-            "url:PUT|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id",
-            "url:GET|/api/v1/courses/:course_id/enrollments",
-            "url:GET|/api/v1/courses/:course_id/pages",
-            "url:PUT|/api/v1/courses/:course_id/pages/:url_or_id",
+            "url:GET|/api/v1/courses/:course_id/assignments/:id",
+            "url:DELETE|/api/v1/courses/:course_id/assignments/:id",
+            "url:POST|/api/v1/accounts/:account_id/courses",
+            "url:PUT|/api/v1/courses/:id",
+            "url:DELETE|/api/v1/courses/:id",
+            "url:GET|/api/v1/courses/:id",
+            "url:GET|/api/v1/accounts/:account_id/courses/:id",
         ],
         "allow_masquerade": False,
-    },
-    {
-        "slug": "full",
-        "name": "Full API",
-        "sort_order": 30,
-        "description": (
-            "Everything the developer key itself allows, including "
-            "account-level endpoints, GraphQL and acting-as. Approve sparingly."
-        ),
-        "allowed_methods": [],
-        "path_rules": [],
-        "denied_patterns": [],
-        "scopes": [],
-        "enforces_scopes": False,
-        "allow_masquerade": True,
     },
 ]
 

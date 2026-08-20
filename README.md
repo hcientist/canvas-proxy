@@ -214,9 +214,9 @@ Defaults from `seed_tiers`:
 
 | Tier | Methods | Reach |
 |---|---|---|
-| `read_basic` | `GET`, `HEAD` | own profile, courses, calendar, planner |
-| `read_write` | all | course-level resources, groups, files; no account endpoints |
-| `full` | all | everything the key allows, including GraphQL and acting-as |
+| `auth_only` | `GET`, `HEAD` | own profile only |
+| `read_only` | `GET`, `HEAD` | profile, courses, enrolments, sections, avatars |
+| `read_write` | all | courses, assignments, enrolments; includes account-level course creation |
 
 Rules are editable per tier in the Django admin:
 

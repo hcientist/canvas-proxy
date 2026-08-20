@@ -35,9 +35,9 @@ PROXY_BASE_URL=http://127.0.0.1:8099
 CSRF_TRUSTED_ORIGINS=http://127.0.0.1:8099
 CANVAS_BASE_URL=http://fake-canvas:9911
 TOKEN_ENCRYPTION_KEY=$("$PYTHON" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
-CANVAS_KEY_READ_BASIC_ID=10000000000001
-CANVAS_KEY_READ_BASIC_SECRET=canvas-key-secret
-CANVAS_LOGIN_TIER=read_basic
+CANVAS_KEY_AUTH_ONLY_ID=10000000000001
+CANVAS_KEY_AUTH_ONLY_SECRET=canvas-key-secret
+CANVAS_LOGIN_TIER=auth_only
 POSTGRES_PASSWORD=$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(24))')
 # The harness drives the app over plain http, so TLS-only behaviour is off.
 SECURE_SSL_REDIRECT=0
@@ -71,7 +71,7 @@ User = get_user_model()
 staff = User.objects.create_user(username="reviewer", password="pw", is_staff=True)
 dev = User.objects.create_user(username="dev", canvas_user_id="7", canvas_name="Dev Person")
 app = ProxyApp(
-    owner=dev, tier=AccessTier.objects.get(slug="read_basic"), name="Gradebook Sync",
+    owner=dev, tier=AccessTier.objects.get(slug="auth_only"), name="Gradebook Sync",
     description="Syncs grades.", redirect_uris=["http://localhost:3000/callback"],
 )
 app.save()

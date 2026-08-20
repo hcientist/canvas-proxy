@@ -12,7 +12,7 @@ from registry.models import AccessTier, AppStatus, ProxyApp, validate_redirect_u
 User = get_user_model()
 
 
-def make_tier(slug="read_basic", **kwargs):
+def make_tier(slug="auth_only", **kwargs):
     defaults = {
         "name": "Read-only",
         "canvas_client_id": "10000000000001",
@@ -95,8 +95,8 @@ class TierPermissionTests(TestCase):
     def setUp(self):
         self.read = make_tier()
         self.full = make_tier(
-            slug="full",
-            name="Full API",
+            slug="read_write",
+            name="Read/write",
             allowed_methods=[],
             path_rules=[],
             denied_patterns=[],
@@ -328,8 +328,8 @@ class DashboardTests(TestCase):
 class HomePageTests(TestCase):
     def test_home_lists_active_tiers(self):
         make_tier()
-        make_tier(slug="full", name="Full API", is_active=False)
+        make_tier(slug="read_write", name="Read/write", is_active=False)
         response = self.client.get(reverse("registry:home"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Read-only")
-        self.assertNotContains(response, "Full API")
+        self.assertNotContains(response, "Read/write")

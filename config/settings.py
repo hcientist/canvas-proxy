@@ -222,7 +222,7 @@ CANVAS_BASE_URL = env("CANVAS_BASE_URL", "https://canvas.instructure.com").rstri
 
 # Tier slug whose developer key is used to sign users in to this proxy itself.
 # Sign-in requests the narrowest scopes and the resulting token is discarded.
-CANVAS_LOGIN_TIER = env("CANVAS_LOGIN_TIER", "read_basic")
+CANVAS_LOGIN_TIER = env("CANVAS_LOGIN_TIER", "auth_only")
 
 # Fernet key used to encrypt Canvas tokens at rest.
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
