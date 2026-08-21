@@ -135,6 +135,7 @@ class ExternalAppForm(forms.ModelForm):
             "credential_name",
             "upstream_client_id",
             "is_public_client",
+            "allow_anonymous",
         )
         widgets = {"description": forms.Textarea(attrs={"rows": 4})}
         labels = {
@@ -142,6 +143,7 @@ class ExternalAppForm(forms.ModelForm):
             "credential_style": "How the API expects credentials",
             "credential_name": "Header or parameter name",
             "upstream_client_id": "API client id / username",
+            "allow_anonymous": "Allow anonymous access (no sign-in required)",
             **COMMON_LABELS,
         }
         help_texts = {
@@ -152,6 +154,9 @@ class ExternalAppForm(forms.ModelForm):
             "credential_name": 'Only for the header and query styles, e.g. "X-Api-Key".',
             "upstream_client_id": "Optional. Only needed for HTTP Basic, or if the "
             "API pairs an id with the secret.",
+            "allow_anonymous": "Skip the OAuth flow. Requests are gated by browser "
+            "Origin instead of a bearer token. Use /ext/public/<client_id>/… "
+            "to call the API.",
             **COMMON_HELP,
         }
 

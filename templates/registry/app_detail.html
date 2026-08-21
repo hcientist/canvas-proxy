@@ -30,6 +30,7 @@
       <dd>{{ app.get_credential_style_display }}{% if app.credential_name %} &middot; <code>{{ app.credential_name }}</code>{% endif %}</dd>
       <dt>Methods allowed</dt>
       <dd>{% for m in app.allowed_methods %}<code>{{ m }}</code> {% empty %}<span class="muted">All</span>{% endfor %}</dd>
+      {% if app.allow_anonymous %}<dt>Anonymous access</dt><dd>Enabled &middot; gated by Origin, no sign-in required</dd>{% endif %}
     {% else %}
       <dt>Access level</dt><dd>{{ app.tier.name }}<br><span class="small muted">{{ app.tier.description }}</span></dd>
     {% endif %}
@@ -69,7 +70,23 @@
 {% if app.status == 'approved' %}
 <h2>Using this app</h2>
 <div class="panel">
-  <h3 style="margin-top:0">1. Send the user to authorize</h3>
+  {% if app.allow_anonymous %}
+    <h3 style="margin-top:0">Call the API (no sign-in required)</h3>
+    <pre><code>fetch("{{ proxy_base_url }}/ext/public/{{ app.client_id }}/some/endpoint")
+  // no Authorization header needed</code></pre>
+    <p class="small muted">
+      Everything after <code>/ext/public/{{ app.client_id }}</code> is appended to
+      <code>{{ app.api_base_url }}</code>. Your registered credentials are attached
+      server-side. Requests are allowed from the origins of your registered
+      redirect URIs.
+    </p>
+    <h3>With sign-in (also supported)</h3>
+    <p class="small muted" style="margin-bottom:0">
+      The standard OAuth flow below still works if you need per-user identity.
+    </p>
+  {% endif %}
+
+  <h3 {% if app.allow_anonymous %}{% else %}style="margin-top:0"{% endif %}>1. Send the user to authorize</h3>
   <pre><code>{{ proxy_base_url }}/oauth2/auth
   ?client_id={{ app.client_id }}
   &amp;response_type=code
