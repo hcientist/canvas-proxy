@@ -45,6 +45,12 @@ STRIPPED_REQUEST_HEADERS = HOP_BY_HOP | {
     "host",
     "cookie",
     "content-length",
+    # The proxy streams the response without decompressing it, and strips
+    # content-encoding on the way back.  If the upstream compressed the body,
+    # the browser would receive raw gzip bytes it has no reason to decompress.
+    # Dropping accept-encoding tells the upstream not to compress, avoiding
+    # the mismatch entirely.
+    "accept-encoding",
     "x-forwarded-for",
     "x-forwarded-host",
     "x-forwarded-proto",
