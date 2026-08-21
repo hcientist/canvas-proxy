@@ -56,6 +56,17 @@ STRIPPED_RESPONSE_HEADERS = HOP_BY_HOP | {
     "content-encoding",
     "set-cookie",
     "strict-transport-security",
+    # Upstream APIs (Giphy, etc.) may send their own CORS headers.  Letting
+    # them through would conflict with the proxy's CorsMiddleware -- e.g. an
+    # upstream Access-Control-Allow-Credentials: true makes browsers reject a
+    # response whose Allow-Origin was set by us.  Strip them all so only the
+    # proxy's own CORS headers survive.
+    "access-control-allow-origin",
+    "access-control-allow-methods",
+    "access-control-allow-headers",
+    "access-control-allow-credentials",
+    "access-control-expose-headers",
+    "access-control-max-age",
 }
 
 # Canvas never needs these from us, and they can escalate privilege.
