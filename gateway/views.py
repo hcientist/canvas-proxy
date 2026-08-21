@@ -18,8 +18,9 @@ from django.views.decorators.csrf import csrf_exempt
 
 from canvasclient import client
 from oauth.models import ProxyToken
-from registry.models import CredentialStyle
+from registry.models import AppStatus, CredentialStyle, ProxyApp
 
+from .cors import allowed_origins, origin_of
 from .models import RequestLog
 from .netguard import check_upstream_url
 from .ratelimit import check_rate_limit
@@ -73,6 +74,113 @@ def proxy(request, upstream_path=""):
 def external_proxy(request, upstream_path=""):
     """Forward to an external app's registered API."""
     return _proxy(request, "/" + upstream_path.lstrip("/"), external=True)
+
+
+@csrf_exempt
+def anonymous_external_proxy(request, client_id, upstream_path=""):
+    """Forward to an external app's API without a bearer token.
+
+    The app must have allow_anonymous=True.  Instead of a bearer token, the
+    request is gated by Origin: only origins derived from the app's registered
+    redirect URIs are accepted.  This keeps the upstream credentials server-side
+    while letting a static frontend call the API without an OAuth flow.
+    """
+    path = "/" + upstream_path.lstrip("/")
+    started = time.monotonic()
+
+    try:
+        app = ProxyApp.objects.get(client_id=client_id)
+    except ProxyApp.DoesNotExist:
+        return _anon_deny(request, path, None, "Unknown app", 404, "not_found")
+
+    if not app.is_external or not app.allow_anonymous:
+        return _anon_deny(
+            request, path, app, "Not configured for anonymous access",
+            403, "access_denied",
+            description="This app does not allow anonymous requests.",
+        )
+    if not app.is_usable:
+        return _anon_deny(
+            request, path, app,
+            f"App is {app.get_status_display().lower()}",
+            403, "access_denied",
+            description=f"This app is {app.get_status_display().lower()}.",
+        )
+
+    origin = request.META.get("HTTP_ORIGIN", "")
+    app_origins = {origin_of(uri) for uri in (app.redirect_uris or [])}
+    app_origins.discard("")
+    if not origin or origin not in app_origins:
+        return _anon_deny(
+            request, path, app, "Origin not allowed",
+            403, "access_denied",
+            description="This origin is not registered for this app.",
+        )
+
+    allowed, reason = app.permits(request.method, path)
+    if not allowed:
+        return _anon_deny(
+            request, path, app, reason, 403, "insufficient_scope", description=reason,
+        )
+
+    blocked = _blocked_params(request, app)
+    if blocked:
+        reason = f"Query parameter '{blocked}' is not permitted."
+        return _anon_deny(
+            request, path, app, reason, 403, "access_denied", description=reason,
+        )
+
+    within_limit, retry_after = check_rate_limit(app)
+    if not within_limit:
+        response = _anon_deny(
+            request, path, app, "Rate limited", 429, "rate_limited",
+            description="Too many requests through this app. Slow down.",
+        )
+        response["Retry-After"] = str(retry_after)
+        return response
+
+    upstream_url = f"{app.api_base_url}{path}"
+    safe, reason = check_upstream_url(upstream_url)
+    if not safe:
+        logger.warning(
+            "Refusing upstream %s for app %s: %s",
+            app.api_base_url, app.client_id, reason,
+        )
+        return _anon_deny(
+            request, path, app, "Unsafe upstream host", 502, "upstream_error",
+            description=reason,
+        )
+
+    headers = _forwardable_headers(request, None)
+    params = _forwardable_query(request)
+    _apply_upstream_credentials(app, headers, params)
+
+    try:
+        upstream = requests.request(
+            method=request.method,
+            url=upstream_url,
+            params=params,
+            data=request.body if request.body else None,
+            headers=headers,
+            timeout=(settings.CANVAS_CONNECT_TIMEOUT, settings.CANVAS_TIMEOUT),
+            allow_redirects=False,
+            stream=True,
+        )
+    except requests.Timeout:
+        return _anon_deny(
+            request, path, app, "Upstream timeout", 504, "upstream_timeout",
+            description=f"Could not reach {app.upstream_label} in time.",
+        )
+    except requests.RequestException as exc:
+        logger.warning("Upstream request to %s failed: %s", path, exc)
+        return _anon_deny(
+            request, path, app, "Upstream error", 502, "upstream_error",
+            description=f"Could not reach {app.upstream_label}.",
+        )
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    _anon_log(request, path, app, upstream.status_code, duration_ms)
+    return _relay(upstream, app)
 
 
 def _proxy(request, path, external):
@@ -457,6 +565,33 @@ def _log(request, path, proxy_token, status_code=None, duration_ms=None, denied_
             status_code=status_code,
             duration_ms=duration_ms,
             denied_reason=denied_reason[:255],
+            client_ip=_client_ip(request),
+        )
+    except Exception:  # noqa: BLE001 - auditing must never break a request
+        logger.exception("Failed to write request log for %s %s", request.method, path)
+
+
+def _anon_deny(request, path, app, reason, status, error, description=""):
+    _anon_log(request, path, app, status, denied_reason=reason)
+    payload = {"error": error}
+    if description:
+        payload["error_description"] = description
+    payload["errors"] = [{"message": description or reason}]
+    return JsonResponse(payload, status=status)
+
+
+def _anon_log(request, path, app, status_code=None, duration_ms=None, denied_reason=""):
+    try:
+        RequestLog.objects.create(
+            app=app,
+            grant=None,
+            canvas_user_id="",
+            method=request.method,
+            path=path[:500],
+            query=request.META.get("QUERY_STRING", "")[:1000],
+            status_code=status_code,
+            duration_ms=duration_ms,
+            denied_reason=(denied_reason or "")[:255],
             client_ip=_client_ip(request),
         )
     except Exception:  # noqa: BLE001 - auditing must never break a request

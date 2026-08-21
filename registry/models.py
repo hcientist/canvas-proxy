@@ -271,6 +271,11 @@ class ProxyApp(models.Model):
         help_text='Optional allowlist: [{"methods": ["GET"], "pattern": "^/v2/items"}]. '
         "Empty means every path under the base URL.",
     )
+    allow_anonymous = models.BooleanField(
+        default=False,
+        help_text="Allow requests without a bearer token, gated by Origin. "
+        "External apps only. Requests arrive at /ext/public/<client_id>/…",
+    )
 
     client_id = models.CharField(max_length=64, unique=True, editable=False)
     client_secret_hash = models.CharField(max_length=255, blank=True)

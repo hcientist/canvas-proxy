@@ -298,6 +298,112 @@ class ExternalSsrfTests(ExternalGatewayTestCase):
         self.assertTrue(RequestLog.objects.get().was_denied)
 
 
+@override_settings(PROXY_BASE_URL=PROXY)
+class AnonymousExternalProxyTests(TestCase):
+    """Tests for /ext/public/<client_id>/... (origin-gated, no bearer token)."""
+
+    def setUp(self):
+        self.app = make_external_app(
+            allow_anonymous=True,
+            credential_style=CredentialStyle.QUERY,
+            credential_name="api_key",
+            redirect_uris=["https://student.github.io/Rhyphy/"],
+        )
+        self.app.upstream_client_secret = "giphy-secret"
+        self.app.save()
+
+    def url(self, path="items"):
+        return f"/ext/public/{self.app.client_id}/{path}"
+
+    def call(self, path="items", origin="https://student.github.io", upstream=None, **kwargs):
+        with mock.patch(
+            "gateway.views.requests.request", return_value=upstream or FakeUpstream()
+        ) as request, public_dns():
+            response = self.client.get(
+                self.url(path),
+                HTTP_ORIGIN=origin,
+                **kwargs,
+            )
+        self.request_mock = request
+        return response
+
+    def sent(self):
+        return self.request_mock.call_args.kwargs
+
+    def test_a_request_from_a_registered_origin_is_forwarded(self):
+        response = self.call()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.sent()["url"], f"{API}/items")
+
+    def test_credentials_are_attached_server_side(self):
+        self.call("gifs/search?q=cats")
+        self.assertIn(("api_key", "giphy-secret"), self.sent()["params"])
+
+    def test_no_bearer_token_is_required(self):
+        # The request has no Authorization header at all.
+        response = self.call()
+        self.assertEqual(response.status_code, 200)
+
+    def test_an_unknown_origin_is_refused(self):
+        response = self.call(origin="https://evil.example.com")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("origin", response.json()["error_description"].lower())
+
+    def test_a_missing_origin_is_refused(self):
+        with mock.patch("gateway.views.requests.request") as request, public_dns():
+            response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 403)
+        request.assert_not_called()
+
+    def test_an_unknown_client_id_returns_404(self):
+        with mock.patch("gateway.views.requests.request"), public_dns():
+            response = self.client.get(
+                "/ext/public/00000000000000000000000000000000/items",
+                HTTP_ORIGIN="https://student.github.io",
+            )
+        self.assertEqual(response.status_code, 404)
+
+    def test_a_non_anonymous_app_is_refused(self):
+        self.app.allow_anonymous = False
+        self.app.save()
+        response = self.call()
+        self.assertEqual(response.status_code, 403)
+
+    def test_a_suspended_app_is_refused(self):
+        self.app.status = "suspended"
+        self.app.save()
+        response = self.call()
+        self.assertEqual(response.status_code, 403)
+
+    def test_method_restrictions_are_enforced(self):
+        with mock.patch("gateway.views.requests.request"), public_dns():
+            response = self.client.post(
+                self.url(),
+                HTTP_ORIGIN="https://student.github.io",
+            )
+        self.assertEqual(response.status_code, 403)
+
+    def test_the_credential_parameter_cannot_be_supplied_by_the_caller(self):
+        response = self.call("items?api_key=mine")
+        self.assertEqual(response.status_code, 403)
+
+    def test_calls_are_audited(self):
+        self.call("items?q=cats")
+        log = RequestLog.objects.get()
+        self.assertEqual(log.app, self.app)
+        self.assertEqual(log.path, "/items")
+        self.assertEqual(log.canvas_user_id, "")
+
+    def test_ssrf_is_checked_at_request_time(self):
+        with mock.patch("gateway.views.requests.request") as request, dns("10.0.0.5"):
+            response = self.client.get(
+                self.url(),
+                HTTP_ORIGIN="https://student.github.io",
+            )
+        self.assertEqual(response.status_code, 502)
+        request.assert_not_called()
+
+
 class PrefixSeparationTests(ExternalGatewayTestCase):
     def test_an_external_app_cannot_use_the_canvas_prefix(self):
         with mock.patch("gateway.views.requests.request") as request:

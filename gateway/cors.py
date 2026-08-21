@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Only the machine-facing surface. The dashboard and consent screens are
 # deliberately excluded -- they are meant to be visited, not scripted.
 CORS_PATHS = (
-    "/ext/",
+    "/ext/",  # covers /ext/public/ too
     "/api/",
     "/oauth2/token",
     "/oauth2/revoke",
