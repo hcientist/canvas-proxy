@@ -18,7 +18,7 @@ from gateway.netguard import (
 )
 from gateway.tests import FakeUpstream
 from oauth.models import CanvasGrant, ProxyToken
-from registry.models import AppKind, CredentialStyle, ProxyApp
+from registry.models import AnonymousDecision, AppKind, CredentialStyle, ProxyApp
 from registry.tests import make_tier, make_user
 
 PROXY = "https://proxy.test"
@@ -305,6 +305,7 @@ class AnonymousExternalProxyTests(TestCase):
     def setUp(self):
         self.app = make_external_app(
             allow_anonymous=True,
+            anonymous_decision=AnonymousDecision.APPROVED,
             credential_style=CredentialStyle.QUERY,
             credential_name="api_key",
             redirect_uris=["https://student.github.io/Rhyphy/"],
@@ -368,6 +369,21 @@ class AnonymousExternalProxyTests(TestCase):
         self.app.save()
         response = self.call()
         self.assertEqual(response.status_code, 403)
+
+    def test_a_request_awaiting_review_is_refused(self):
+        self.app.anonymous_decision = AnonymousDecision.UNDECIDED
+        self.app.save()
+        response = self.call()
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("not been approved", response.json()["error_description"])
+        self.request_mock.assert_not_called()
+
+    def test_a_declined_request_is_refused(self):
+        self.app.anonymous_decision = AnonymousDecision.DECLINED
+        self.app.save()
+        response = self.call()
+        self.assertEqual(response.status_code, 403)
+        self.request_mock.assert_not_called()
 
     def test_a_suspended_app_is_refused(self):
         self.app.status = "suspended"

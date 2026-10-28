@@ -324,6 +324,32 @@ session to every approved app's origin for no benefit.
 Browser apps should register as **public clients**, which requires PKCE and
 issues no client secret — a secret shipped to a browser is not a secret.
 
+### Anonymous access (no sign-in)
+
+Some frontends have no reason to make every visitor sign in to Canvas just to
+search for a GIF. An external app can **request anonymous access** on its
+registration. If a reviewer approves the request — a separate checkbox from
+approving the app — the app is also served at
+
+```
+/ext/public/<client_id>/<path>
+```
+
+with no bearer token. Instead, the request must carry an `Origin` that matches
+one of the app's registered redirect URIs. The stored credentials are attached
+exactly as on `/ext/`, and the same method and path rules, query-parameter
+guard and per-app rate limit apply.
+
+Turning the request on for an approved app leaves the app approved for
+signed-in use. Only the anonymous route waits, in its own section of the review
+queue. Turning it off withdraws the grant at once. Any later re-review (for
+example after changing redirect URIs) decides it afresh.
+
+The `Origin` check keeps *other websites* from spending the key through
+visitors' browsers. It does not stop a script outside a browser, which can send
+any `Origin` it likes. The rate limit is the real ceiling, so approve it only
+for keys where that exposure is acceptable.
+
 The two prefixes are not interchangeable. A token for an external app is
 rejected at `/api/`, and a Canvas token is rejected at `/ext/`, so a Canvas
 grant can never be spent against an arbitrary third-party host.

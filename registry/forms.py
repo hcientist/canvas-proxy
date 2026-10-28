@@ -143,7 +143,7 @@ class ExternalAppForm(forms.ModelForm):
             "credential_style": "How the API expects credentials",
             "credential_name": "Header or parameter name",
             "upstream_client_id": "API client id / username",
-            "allow_anonymous": "Allow anonymous access (no sign-in required)",
+            "allow_anonymous": "Request anonymous access (no sign-in required)",
             **COMMON_LABELS,
         }
         help_texts = {
@@ -154,9 +154,10 @@ class ExternalAppForm(forms.ModelForm):
             "credential_name": 'Only for the header and query styles, e.g. "X-Api-Key".',
             "upstream_client_id": "Optional. Only needed for HTTP Basic, or if the "
             "API pairs an id with the secret.",
-            "allow_anonymous": "Skip the OAuth flow. Requests are gated by browser "
-            "Origin instead of a bearer token. Use /ext/public/<client_id>/… "
-            "to call the API.",
+            "allow_anonymous": "Ask to skip the OAuth flow. If a reviewer approves, "
+            "/ext/public/<client_id>/… accepts requests with no bearer token, "
+            "checked only against the origins of your redirect URIs. Say in the "
+            "description why your users should not have to sign in.",
             **COMMON_HELP,
         }
 
@@ -231,6 +232,19 @@ class ReviewForm(forms.Form):
         widget=forms.Textarea(attrs={"rows": 3}),
         label="Notes for the developer",
     )
+
+    approve_anonymous = forms.BooleanField(
+        required=False,
+        label="Also approve anonymous access",
+        help_text="Lets /ext/public/ serve this app without sign-in, trusting the "
+        "Origin header alone. Leave unticked to approve sign-in use only.",
+    )
+
+    def __init__(self, *args, app=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # The checkbox only means something when the developer asked for it.
+        if not (app and app.is_external and app.allow_anonymous):
+            del self.fields["approve_anonymous"]
 
     def clean(self):
         data = super().clean()

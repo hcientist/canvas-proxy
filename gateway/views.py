@@ -18,7 +18,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from canvasclient import client
 from oauth.models import ProxyToken
-from registry.models import AppStatus, CredentialStyle, ProxyApp
+from registry.models import AnonymousDecision, AppStatus, CredentialStyle, ProxyApp
 
 from .cors import allowed_origins, origin_of
 from .models import RequestLog
@@ -97,10 +97,11 @@ def external_proxy(request, upstream_path=""):
 def anonymous_external_proxy(request, client_id, upstream_path=""):
     """Forward to an external app's API without a bearer token.
 
-    The app must have allow_anonymous=True.  Instead of a bearer token, the
-    request is gated by Origin: only origins derived from the app's registered
-    redirect URIs are accepted.  This keeps the upstream credentials server-side
-    while letting a static frontend call the API without an OAuth flow.
+    The developer must have asked for anonymous access and a reviewer granted
+    it.  Instead of a bearer token, the request is gated by Origin: only
+    origins derived from the app's registered redirect URIs are accepted.  This
+    keeps the upstream credentials server-side while letting a static frontend
+    call the API without an OAuth flow.
     """
     path = "/" + upstream_path.lstrip("/")
     started = time.monotonic()
@@ -115,6 +116,12 @@ def anonymous_external_proxy(request, client_id, upstream_path=""):
             request, path, app, "Not configured for anonymous access",
             403, "access_denied",
             description="This app does not allow anonymous requests.",
+        )
+    if app.anonymous_decision != AnonymousDecision.APPROVED:
+        return _anon_deny(
+            request, path, app, "Anonymous access not approved",
+            403, "access_denied",
+            description="Anonymous access for this app has not been approved.",
         )
     if not app.is_usable:
         return _anon_deny(

@@ -4,7 +4,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from gateway.tests_external import API, dns, make_external_app, public_dns
-from registry.models import AppKind, AppStatus, CredentialStyle, ProxyApp
+from registry.models import AnonymousDecision, AppKind, AppStatus, CredentialStyle, ProxyApp
 from registry.tests import make_tier, make_user
 
 
@@ -243,3 +243,117 @@ class ExternalReviewTests(TestCase):
     def test_external_apps_appear_in_the_queue(self):
         response = self.client.get(reverse("registry:review_queue"))
         self.assertContains(response, self.app.name)
+
+
+class AnonymousAccessRequestTests(TestCase):
+    """Anonymous access is asked for by the developer and granted by a reviewer."""
+
+    def setUp(self):
+        self.owner = make_user("student")
+        self.staff = make_user("staff", is_staff=True)
+        self.app = make_external_app(owner=self.owner, status=AppStatus.APPROVED)
+
+    def edit(self, **overrides):
+        data = {
+            "name": self.app.name,
+            "description": "",
+            "homepage_url": "",
+            "api_base_url": self.app.api_base_url,
+            "redirect_uris": "https://app.example.edu/callback",
+            "allowed_methods": ["GET"],
+            "credential_style": CredentialStyle.NONE,
+            "credential_name": "",
+            "upstream_client_id": "",
+            "upstream_client_secret": "",
+        }
+        data.update(overrides)
+        self.client.force_login(self.owner)
+        with public_dns():
+            return self.client.post(reverse("registry:app_edit", args=[self.app.pk]), data)
+
+    def review(self, **data):
+        self.client.force_login(self.staff)
+        return self.client.post(reverse("registry:review_app", args=[self.app.pk]), data)
+
+    def test_requesting_it_does_not_grant_it(self):
+        self.edit(allow_anonymous="on")
+        self.app.refresh_from_db()
+        self.assertTrue(self.app.allow_anonymous)
+        self.assertEqual(self.app.anonymous_decision, AnonymousDecision.UNDECIDED)
+        self.assertFalse(self.app.anonymous_enabled)
+
+    def test_requesting_it_leaves_the_app_approved_for_signed_in_use(self):
+        self.edit(allow_anonymous="on")
+        self.app.refresh_from_db()
+        self.assertEqual(self.app.status, AppStatus.APPROVED)
+        self.assertTrue(self.app.anonymous_request_pending)
+
+    def test_the_request_appears_in_the_review_queue(self):
+        self.edit(allow_anonymous="on")
+        self.client.force_login(self.staff)
+        response = self.client.get(reverse("registry:review_queue"))
+        self.assertContains(response, "Anonymous access requests")
+        self.assertContains(response, self.app.name)
+
+    def test_the_review_form_offers_the_grant_only_when_requested(self):
+        self.client.force_login(self.staff)
+        url = reverse("registry:review_app", args=[self.app.pk])
+        self.assertNotContains(self.client.get(url), "approve_anonymous")
+        self.app.set_anonymous_request(True)
+        self.app.save()
+        self.assertContains(self.client.get(url), "approve_anonymous")
+
+    def test_a_reviewer_can_grant_it(self):
+        self.edit(allow_anonymous="on")
+        self.review(decision="approve", notes="", approve_anonymous="on")
+        self.app.refresh_from_db()
+        self.assertEqual(self.app.anonymous_decision, AnonymousDecision.APPROVED)
+        self.assertTrue(self.app.anonymous_enabled)
+
+    def test_approving_without_the_box_declines_it_but_keeps_the_app(self):
+        self.edit(allow_anonymous="on")
+        self.review(decision="approve", notes="")
+        self.app.refresh_from_db()
+        self.assertEqual(self.app.status, AppStatus.APPROVED)
+        self.assertEqual(self.app.anonymous_decision, AnonymousDecision.DECLINED)
+        self.assertFalse(self.app.anonymous_enabled)
+        self.assertFalse(self.app.anonymous_request_pending)
+
+    def test_rejecting_the_app_never_grants_it(self):
+        self.app.status = AppStatus.PENDING
+        self.app.set_anonymous_request(True)
+        self.app.save()
+        self.review(decision="reject", notes="no", approve_anonymous="on")
+        self.app.refresh_from_db()
+        self.assertEqual(self.app.anonymous_decision, AnonymousDecision.DECLINED)
+
+    def test_switching_it_off_withdraws_the_grant(self):
+        self.app.allow_anonymous = True
+        self.app.anonymous_decision = AnonymousDecision.APPROVED
+        self.app.save()
+        self.edit()  # checkbox absent: request switched off
+        self.app.refresh_from_db()
+        self.assertFalse(self.app.allow_anonymous)
+        self.assertEqual(self.app.anonymous_decision, AnonymousDecision.UNDECIDED)
+
+    def test_asking_again_after_a_decline_goes_back_to_a_reviewer(self):
+        self.app.allow_anonymous = True
+        self.app.anonymous_decision = AnonymousDecision.DECLINED
+        self.app.save()
+        self.edit()
+        self.edit(allow_anonymous="on")
+        self.app.refresh_from_db()
+        self.assertTrue(self.app.anonymous_request_pending)
+
+    def test_a_re_review_decides_it_afresh(self):
+        # Changing redirect URIs changes which origins would be trusted.
+        self.app.allow_anonymous = True
+        self.app.anonymous_decision = AnonymousDecision.APPROVED
+        self.app.save()
+        self.edit(allow_anonymous="on", redirect_uris="https://elsewhere.example.edu/cb")
+        self.app.refresh_from_db()
+        self.assertEqual(self.app.status, AppStatus.PENDING)
+        self.assertFalse(self.app.anonymous_enabled)
+        self.review(decision="approve", notes="")
+        self.app.refresh_from_db()
+        self.assertEqual(self.app.anonymous_decision, AnonymousDecision.DECLINED)

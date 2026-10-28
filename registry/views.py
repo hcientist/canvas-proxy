@@ -13,7 +13,7 @@ from gateway.models import RequestLog
 from oauth.models import CanvasGrant
 
 from .forms import ExternalAppForm, ProxyAppForm, ReviewForm
-from .models import AccessTier, AppKind, AppStatus, ProxyApp
+from .models import AccessTier, AnonymousDecision, AppKind, AppStatus, ProxyApp
 
 staff_required = user_passes_test(lambda u: u.is_authenticated and u.is_staff)
 
@@ -154,7 +154,11 @@ def app_edit(request, pk):
         form = form_class(request.POST, instance=app)
         if form.is_valid():
             sensitive_change = REVIEW_TRIGGERING_FIELDS & set(form.changed_data)
-            app = form.save()
+            anonymous_change = "allow_anonymous" in form.changed_data
+            app = form.save(commit=False)
+            if anonymous_change:
+                app.set_anonymous_request(app.allow_anonymous)
+            app.save()
             if sensitive_change and app.status == AppStatus.APPROVED:
                 # An approval covers a specific tier and redirect list; changing
                 # either means the approval no longer describes this app.
@@ -173,6 +177,14 @@ def app_edit(request, pk):
                     + ", ".join(sorted(sensitive_change))
                     + " sent this app back for review. Existing tokens keep working "
                     "until a reviewer decides.",
+                )
+            elif anonymous_change and app.anonymous_request_pending:
+                # Only the anonymous route waits on a reviewer; signed-in use of
+                # an approved app carries on as before.
+                messages.info(
+                    request,
+                    "Anonymous access requested. A reviewer will decide; the app "
+                    "keeps working for signed-in users meanwhile.",
                 )
             else:
                 messages.success(request, "App updated.")
@@ -254,6 +266,16 @@ def review_queue(request):
         .select_related("tier", "owner")
         .order_by("submitted_at")
     )
+    anonymous_requests = (
+        ProxyApp.objects.filter(
+            kind=AppKind.EXTERNAL,
+            status=AppStatus.APPROVED,
+            allow_anonymous=True,
+            anonymous_decision=AnonymousDecision.UNDECIDED,
+        )
+        .select_related("owner")
+        .order_by("updated_at")
+    )
     decided = (
         ProxyApp.objects.exclude(status__in=[AppStatus.PENDING, AppStatus.DRAFT])
         .select_related("tier", "owner", "reviewed_by")
@@ -262,7 +284,11 @@ def review_queue(request):
     return render(
         request,
         "registry/review_queue.html",
-        {"pending": pending, "decided": decided},
+        {
+            "pending": pending,
+            "anonymous_requests": anonymous_requests,
+            "decided": decided,
+        },
     )
 
 
@@ -276,13 +302,20 @@ def review_app(request, pk):
     )
 
     if request.method == "POST":
-        form = ReviewForm(request.POST)
+        form = ReviewForm(request.POST, app=app)
         if form.is_valid():
             decision = form.cleaned_data["decision"]
             notes = form.cleaned_data["notes"]
             if decision == "approve":
-                app.approve(request.user, notes)
-                messages.success(request, f"Approved {app.name}.")
+                anonymous = form.cleaned_data.get("approve_anonymous", False)
+                app.approve(request.user, notes, anonymous=anonymous)
+                if app.allow_anonymous and app.is_external:
+                    granted = "with" if anonymous else "without"
+                    messages.success(
+                        request, f"Approved {app.name} {granted} anonymous access."
+                    )
+                else:
+                    messages.success(request, f"Approved {app.name}.")
             elif decision == "reject":
                 app.reject(request.user, notes)
                 messages.success(request, f"Rejected {app.name}.")
@@ -294,7 +327,7 @@ def review_app(request, pk):
                 )
             return redirect("registry:review_queue")
     else:
-        form = ReviewForm()
+        form = ReviewForm(app=app)
 
     return render(
         request,

@@ -25,6 +25,27 @@
   {% endif %}
 </div>
 
+{% if anonymous_requests %}
+<h2>Anonymous access requests</h2>
+<p class="small muted">Approved apps asking to be called without sign-in. They keep working for signed-in users while they wait.</p>
+<div class="panel">
+  <table>
+    <thead><tr><th>App</th><th>Owner</th><th>Upstream</th><th>Requested</th><th></th></tr></thead>
+    <tbody>
+      {% for app in anonymous_requests %}
+        <tr>
+          <td><a href="{% url 'registry:review_app' app.pk %}">{{ app.name }}</a></td>
+          <td class="small">{{ app.owner.display_name }}</td>
+          <td><code>{{ app.upstream_label }}</code></td>
+          <td class="small">{{ app.updated_at }}</td>
+          <td><a class="btn secondary small" href="{% url 'registry:review_app' app.pk %}">Review</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 <h2>Recent decisions</h2>
 <div class="panel">
   {% if decided %}

@@ -209,6 +209,14 @@ class CredentialStyle(models.TextChoices):
     QUERY = "query", "Query parameter"
 
 
+class AnonymousDecision(models.TextChoices):
+    """A reviewer's answer to an app's request for anonymous access."""
+
+    UNDECIDED = "", "Awaiting review"
+    APPROVED = "approved", "Approved"
+    DECLINED = "declined", "Declined"
+
+
 class ProxyApp(models.Model):
     """A third-party app registered by a developer.
 
@@ -273,8 +281,16 @@ class ProxyApp(models.Model):
     )
     allow_anonymous = models.BooleanField(
         default=False,
-        help_text="Allow requests without a bearer token, gated by Origin. "
-        "External apps only. Requests arrive at /ext/public/<client_id>/…",
+        help_text="The developer asks for requests without a bearer token, gated "
+        "by Origin. External apps only. Requests arrive at /ext/public/<client_id>/…",
+    )
+    anonymous_decision = models.CharField(
+        max_length=20,
+        choices=AnonymousDecision.choices,
+        default=AnonymousDecision.UNDECIDED,
+        blank=True,
+        help_text="A reviewer's answer to the anonymous-access request. Set only "
+        "by a review decision; cleared whenever the request is switched on or off.",
     )
 
     client_id = models.CharField(max_length=64, unique=True, editable=False)
@@ -332,6 +348,39 @@ class ProxyApp(models.Model):
         return bool(self.tier and self.tier.is_active)
 
     @property
+    def anonymous_enabled(self):
+        """Whether /ext/public/ serves this app: requested, granted, and usable."""
+        return (
+            self.is_external
+            and self.allow_anonymous
+            and self.anonymous_decision == AnonymousDecision.APPROVED
+            and self.is_usable
+        )
+
+    @property
+    def anonymous_request_pending(self):
+        """An approved app asking for anonymous access nobody has ruled on yet.
+
+        Such an app stays approved for its signed-in users while it waits; only
+        the anonymous route is held back.
+        """
+        return (
+            self.is_external
+            and self.allow_anonymous
+            and self.status == AppStatus.APPROVED
+            and self.anonymous_decision == AnonymousDecision.UNDECIDED
+        )
+
+    def set_anonymous_request(self, requested):
+        """Record the developer switching the request on or off.
+
+        Either way the previous decision no longer applies: switching it off
+        withdraws a grant, and switching it back on asks a reviewer afresh.
+        """
+        self.allow_anonymous = bool(requested)
+        self.anonymous_decision = AnonymousDecision.UNDECIDED
+
+    @property
     def upstream_label(self):
         """Where this app's traffic goes, for consent screens and review."""
         if self.is_external:
@@ -379,13 +428,29 @@ class ProxyApp(models.Model):
         self.reviewed_by = None
         self.reviewed_at = None
 
-    def _record_decision(self, status, reviewer, notes):
+    def _record_decision(self, status, reviewer, notes, anonymous=False):
         self.status = status
         self.reviewed_by = reviewer
         self.reviewed_at = timezone.now()
         self.review_notes = notes
+        # Anonymous access is granted per decision, never carried over: each
+        # review sees the app as it now is, including the origins it would trust.
+        if self.is_external and self.allow_anonymous:
+            granted = anonymous and status == AppStatus.APPROVED
+            self.anonymous_decision = (
+                AnonymousDecision.APPROVED if granted else AnonymousDecision.DECLINED
+            )
+        else:
+            self.anonymous_decision = AnonymousDecision.UNDECIDED
         self.save(
-            update_fields=["status", "reviewed_by", "reviewed_at", "review_notes", "updated_at"]
+            update_fields=[
+                "status",
+                "reviewed_by",
+                "reviewed_at",
+                "review_notes",
+                "anonymous_decision",
+                "updated_at",
+            ]
         )
         # Which origins may call from a browser follows approval status, so a
         # decision has to take effect now rather than when the cache expires.
@@ -394,8 +459,9 @@ class ProxyApp(models.Model):
 
         forget_origins()
 
-    def approve(self, reviewer, notes=""):
-        self._record_decision(AppStatus.APPROVED, reviewer, notes)
+    def approve(self, reviewer, notes="", anonymous=False):
+        """Approve the app; `anonymous` also grants a requested /ext/public/ route."""
+        self._record_decision(AppStatus.APPROVED, reviewer, notes, anonymous=anonymous)
 
     def reject(self, reviewer, notes=""):
         self._record_decision(AppStatus.REJECTED, reviewer, notes)
