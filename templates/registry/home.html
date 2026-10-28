@@ -44,8 +44,29 @@
     <dt>Token</dt><dd><code>{{ proxy_base_url }}/oauth2/token</code></dd>
     <dt>Revocation</dt><dd><code>{{ proxy_base_url }}/oauth2/revoke</code></dd>
     <dt>API base</dt><dd><code>{{ proxy_base_url }}/api/v1/</code></dd>
+    <dt>External API base</dt><dd><code>{{ proxy_base_url }}/ext/</code></dd>
     <dt>Metadata</dt><dd><code>{{ proxy_base_url }}/oauth2/metadata</code></dd>
   </dl>
+</div>
+
+<h2>Calling from a browser</h2>
+<div class="panel">
+  <p class="small">
+    Frontends can call this host directly: <code>/api/</code>, <code>/ext/</code> and the
+    token, revocation and metadata endpoints send CORS headers. There is no separate
+    list of allowed origins &mdash; an origin is allowed once one of your app's
+    redirect URIs on that origin is approved.
+  </p>
+  <p class="small">
+    An app can also front a different API instead of Canvas. You supply its base URL
+    and any key; the proxy attaches the key server-side, and your frontend calls
+    <code>{{ proxy_base_url }}/ext/...</code> with its token.
+  </p>
+  <p class="small muted" style="margin-bottom:0">
+    Browser apps should register as public clients, which use PKCE and get no client
+    secret. Requests are authorized by bearer token only; cookies are never accepted
+    cross-origin.
+  </p>
 </div>
 
 <div class="actions">
